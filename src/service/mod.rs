@@ -1,0 +1,12 @@
+pub mod add;
+pub mod cat;
+pub mod doctor;
+pub mod find;
+pub mod forget;
+pub mod ls;
+pub mod models;
+pub mod reindex;
+pub mod remember;
+pub mod rm;
+pub mod shared;
+pub mod show;

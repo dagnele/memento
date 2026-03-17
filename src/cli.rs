@@ -1,0 +1,88 @@
+use clap::{Parser, Subcommand, ValueEnum};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Parser)]
+#[command(name = "memento")]
+#[command(about = "A fast, local CLI for context indexing")]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: CliCommand,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Subcommand)]
+pub enum CliCommand {
+    Init {
+        #[arg(
+            long,
+            value_enum,
+            help = "Embedding model to use; see `memento models` for options and use cases"
+        )]
+        model: Option<EmbeddingModelArg>,
+        #[arg(long)]
+        port: Option<u16>,
+    },
+    Serve {
+        #[arg(long, help = "Print per-command debug timing to stderr")]
+        debug: bool,
+    },
+    Doctor,
+    Models,
+    Add {
+        #[arg(long)]
+        force: bool,
+        paths: Vec<String>,
+    },
+    Rm {
+        target: String,
+    },
+    Remember {
+        #[arg(long, value_enum)]
+        namespace: MemoryNamespace,
+        #[arg(long)]
+        path: String,
+        #[arg(long)]
+        file: Option<String>,
+        text: Option<String>,
+    },
+    Reindex {
+        paths: Vec<String>,
+    },
+    Forget {
+        uri: String,
+    },
+    Ls {
+        uri: Option<String>,
+    },
+    Cat {
+        uri: String,
+    },
+    Show {
+        uri: String,
+    },
+    Find {
+        query: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, ValueEnum, Serialize, Deserialize, JsonSchema)]
+pub enum MemoryNamespace {
+    User,
+    Agent,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, ValueEnum, Serialize, Deserialize)]
+pub enum EmbeddingModelArg {
+    #[value(name = "bge-small-en-v1.5")]
+    BgeSmallEnV15,
+    #[value(name = "bge-base-en-v1.5")]
+    BgeBaseEnV15,
+    #[value(name = "bge-large-en-v1.5")]
+    BgeLargeEnV15,
+    #[value(name = "jina-embeddings-v2-base-code")]
+    JinaEmbeddingsV2BaseCode,
+    #[value(name = "nomic-embed-text-v1.5")]
+    NomicEmbedTextV15,
+    #[value(name = "bge-m3")]
+    BgeM3,
+}

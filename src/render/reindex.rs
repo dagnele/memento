@@ -1,0 +1,22 @@
+use owo_colors::OwoColorize;
+
+use crate::service::reindex::ReindexResult;
+
+pub fn render(result: &ReindexResult) -> String {
+    let mut lines = vec![format!(
+        "{} {} {}",
+        "memento".bold(),
+        "reindex".cyan().bold(),
+        format!("refreshed {} resource(s)", result.indexed_paths.len()).green()
+    )];
+
+    for path in &result.indexed_paths {
+        lines.push(format!("{} {}", "reindexed".dimmed(), path.cyan()));
+    }
+
+    for path in &result.deleted_paths {
+        lines.push(format!("{} {}", "missing".dimmed(), path.red()));
+    }
+
+    lines.join("\n")
+}
