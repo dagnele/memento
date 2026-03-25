@@ -1,5 +1,5 @@
 use std::fs;
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpStream;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -85,15 +85,16 @@ fn stop_server(child: &mut std::process::Child) {
     let _ = child.wait();
 }
 
-fn reserve_port_pair_start() -> u16 {
-    loop {
-        let first = TcpListener::bind(("127.0.0.1", 0)).expect("bind ephemeral port");
-        let port = first.local_addr().expect("read local address").port();
+use std::sync::atomic::{AtomicU16, Ordering};
 
-        if port < u16::MAX && TcpListener::bind(("127.0.0.1", port + 1)).is_ok() {
-            return port;
-        }
-    }
+/// Each test gets a unique, non-overlapping port pair by atomically
+/// incrementing a global counter.  This avoids the TOCTOU race of the
+/// previous bind-then-release approach that caused "os error 10048"
+/// failures when tests ran in parallel.
+static NEXT_PORT: AtomicU16 = AtomicU16::new(19000);
+
+fn reserve_port_pair_start() -> u16 {
+    NEXT_PORT.fetch_add(2, Ordering::Relaxed)
 }
 
 fn write_server_port(temp: &tempfile::TempDir, port: u16) {
