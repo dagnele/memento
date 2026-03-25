@@ -12,11 +12,9 @@ use crate::dispatch;
 use crate::indexing::index_namespace_item;
 use crate::mcp;
 use crate::protocol::{ErrorResponse, ExecuteRequest, RemoteCommand};
-use crate::repository::workspace::{INDEX_FILE, WorkspaceRepository};
+use crate::repository::workspace::{AGENT_DIR, INDEX_FILE, USER_DIR, WorkspaceRepository};
 use crate::timing::{enable_timing, timing_enabled};
 use crate::uri::Namespace;
-
-const AGENT_SKILLS_DIR: &str = ".memento/agent/skills";
 
 pub fn serve(debug: bool) -> Result<()> {
     if debug {
@@ -25,7 +23,6 @@ pub fn serve(debug: bool) -> Result<()> {
 
     let config = WorkspaceConfig::load()
         .context("failed to load workspace config; run `memento init` first")?;
-    ensure_agent_skills_indexed(&config)?;
     let address = format!("127.0.0.1:{}", config.server_port);
     let mcp_port = config.server_port + 1;
     let mcp_address = format!("127.0.0.1:{mcp_port}");
@@ -34,6 +31,7 @@ pub fn serve(debug: bool) -> Result<()> {
         .with_context(|| format!("failed to bind server on {address}"))?;
     let mcp_server = mcp::spawn_http_server(mcp_port)
         .with_context(|| format!("failed to start MCP server on {mcp_address}"))?;
+    ensure_namespace_items_indexed(&config)?;
     let write_lock = Mutex::new(());
 
     println!("memento serve listening on http://{address}");
@@ -60,7 +58,7 @@ pub fn serve(debug: bool) -> Result<()> {
     Ok(())
 }
 
-fn ensure_agent_skills_indexed(config: &WorkspaceConfig) -> Result<()> {
+fn ensure_namespace_items_indexed(config: &WorkspaceConfig) -> Result<()> {
     bootstrap::ensure_default_agent_skill_file()?;
 
     let repository = WorkspaceRepository::open(INDEX_FILE)
@@ -69,35 +67,42 @@ fn ensure_agent_skills_indexed(config: &WorkspaceConfig) -> Result<()> {
         .initialize_schema()
         .context("failed to initialize workspace schema")?;
 
-    for skill_path in collect_skill_files(Path::new(AGENT_SKILLS_DIR))? {
-        let relative_skill_path = skill_path
-            .strip_prefix(AGENT_SKILLS_DIR)
-            .expect("skill path should be inside skills dir");
-        let uri_path = skill_uri_path(relative_skill_path)?;
-        let uri = crate::uri::build_namespace_item_uri(Namespace::Agent, &uri_path);
+    for (namespace, root_dir) in [
+        (Namespace::Agent, Path::new(AGENT_DIR)),
+        (Namespace::User, Path::new(USER_DIR)),
+    ] {
+        for item_path in collect_item_files(root_dir)? {
+            let relative_item_path = item_path
+                .strip_prefix(root_dir)
+                .expect("indexed path should be inside namespace dir");
+            let uri_path = namespace_uri_path(relative_item_path)?;
+            let uri = crate::uri::build_namespace_item_uri(namespace, &uri_path);
+            let source_path = normalize_source_path(&item_path)?;
 
-        if repository.get_item_by_uri(&uri)?.is_some() {
-            continue;
+            if let Some(existing_item) = repository.get_item_by_source_path(&source_path)? {
+                if existing_item.uri == uri {
+                    continue;
+                }
+
+                repository.delete_item(existing_item.id)?;
+            } else if repository.get_item_by_uri(&uri)?.is_some() {
+                continue;
+            }
+
+            println!(
+                "memento serve auto-indexing {} item {} from {}",
+                namespace.as_str(),
+                uri,
+                source_path
+            );
+            index_namespace_item(&repository, config, namespace, &uri_path, &source_path)?;
         }
-
-        let source_path = normalize_source_path(&skill_path)?;
-        println!(
-            "memento serve auto-indexing agent skill {} from {}",
-            uri, source_path
-        );
-        index_namespace_item(
-            &repository,
-            config,
-            Namespace::Agent,
-            &uri_path,
-            &source_path,
-        )?;
     }
 
     Ok(())
 }
 
-fn collect_skill_files(path: &Path) -> Result<Vec<std::path::PathBuf>> {
+fn collect_item_files(path: &Path) -> Result<Vec<std::path::PathBuf>> {
     if !path.exists() {
         return Ok(Vec::new());
     }
@@ -105,7 +110,7 @@ fn collect_skill_files(path: &Path) -> Result<Vec<std::path::PathBuf>> {
     let mut files = Vec::new();
 
     for entry in fs::read_dir(path)
-        .with_context(|| format!("failed to read skill directory `{}`", path.display()))?
+        .with_context(|| format!("failed to read namespace directory `{}`", path.display()))?
     {
         let entry =
             entry.with_context(|| format!("failed to read entry in `{}`", path.display()))?;
@@ -115,7 +120,7 @@ fn collect_skill_files(path: &Path) -> Result<Vec<std::path::PathBuf>> {
             .with_context(|| format!("failed to inspect `{}`", entry_path.display()))?;
 
         if file_type.is_dir() {
-            files.extend(collect_skill_files(&entry_path)?);
+            files.extend(collect_item_files(&entry_path)?);
         } else if file_type.is_file() {
             files.push(entry_path);
         }
@@ -125,18 +130,12 @@ fn collect_skill_files(path: &Path) -> Result<Vec<std::path::PathBuf>> {
     Ok(files)
 }
 
-fn skill_uri_path(path: &Path) -> Result<String> {
+fn namespace_uri_path(path: &Path) -> Result<String> {
     let normalized = normalize_source_path(path)?;
-    let relative = normalized
+    Ok(normalized
         .strip_prefix('/')
         .unwrap_or(&normalized)
-        .to_string();
-    let without_extension = match relative.rsplit_once('.') {
-        Some((base, _)) => base.to_string(),
-        None => relative,
-    };
-
-    Ok(format!("skills/{without_extension}"))
+        .to_string())
 }
 
 fn normalize_source_path(path: &Path) -> Result<String> {

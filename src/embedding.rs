@@ -118,6 +118,13 @@ fn test_embedding(text: &str) -> Option<Vec<f32>> {
         embedding[index] += 1.0;
     }
 
+    let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm > 0.0 {
+        for value in &mut embedding {
+            *value /= norm;
+        }
+    }
+
     Some(embedding)
 }
 

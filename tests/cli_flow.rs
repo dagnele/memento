@@ -215,7 +215,7 @@ fn serve_indexes_default_agent_skill_guide() {
     let mut server = start_server(&temp, true);
 
     let output = base_command(&temp)
-        .args(["show", "mem://agent/skills/memento"])
+        .args(["show", "mem://agent/skills/memento.md"])
         .assert()
         .success()
         .get_output()
@@ -223,11 +223,11 @@ fn serve_indexes_default_agent_skill_guide() {
         .clone();
 
     let stdout = strip_ansi(&String::from_utf8(output).expect("stdout is utf-8"));
-    assert!(stdout.contains("mem://agent/skills/memento"));
+    assert!(stdout.contains("mem://agent/skills/memento.md"));
     assert!(stdout.contains(".memento/agent/skills/memento.md"));
 
     let output = base_command(&temp)
-        .args(["cat", "mem://agent/skills/memento"])
+        .args(["cat", "mem://agent/skills/memento.md"])
         .assert()
         .success()
         .get_output()
@@ -280,24 +280,24 @@ fn serve_indexes_all_agent_skill_files() {
         .clone();
 
     let stdout = strip_ansi(&String::from_utf8(output).expect("stdout is utf-8"));
-    assert!(stdout.contains("mem://agent/skills/memento"));
-    assert!(stdout.contains("mem://agent/skills/debugging"));
+    assert!(stdout.contains("mem://agent/skills/memento.md"));
+    assert!(stdout.contains("mem://agent/skills/debugging.md"));
     assert!(stdout.contains("mem://agent/skills/rust"));
 
     let server_stdout =
         fs::read_to_string(temp.path().join("server.stdout.log")).expect("read server stdout log");
     assert!(server_stdout.contains(
-        "memento serve auto-indexing agent skill mem://agent/skills/memento from .memento/agent/skills/memento.md"
+        "memento serve auto-indexing agent item mem://agent/skills/memento.md from .memento/agent/skills/memento.md"
     ));
     assert!(server_stdout.contains(
-        "memento serve auto-indexing agent skill mem://agent/skills/debugging from .memento/agent/skills/debugging.md"
+        "memento serve auto-indexing agent item mem://agent/skills/debugging.md from .memento/agent/skills/debugging.md"
     ));
     assert!(server_stdout.contains(
-        "memento serve auto-indexing agent skill mem://agent/skills/rust/refactor from .memento/agent/skills/rust/refactor.md"
+        "memento serve auto-indexing agent item mem://agent/skills/rust/refactor.md from .memento/agent/skills/rust/refactor.md"
     ));
 
     let output = base_command(&temp)
-        .args(["show", "mem://agent/skills/rust/refactor"])
+        .args(["show", "mem://agent/skills/rust/refactor.md"])
         .assert()
         .success()
         .get_output()
@@ -305,8 +305,70 @@ fn serve_indexes_all_agent_skill_files() {
         .clone();
 
     let stdout = strip_ansi(&String::from_utf8(output).expect("stdout is utf-8"));
-    assert!(stdout.contains("mem://agent/skills/rust/refactor"));
+    assert!(stdout.contains("mem://agent/skills/rust/refactor.md"));
     assert!(stdout.contains(".memento/agent/skills/rust/refactor.md"));
+
+    stop_server(&mut server);
+}
+
+#[test]
+fn serve_auto_indexes_agent_and_user_namespace_files_with_extensions() {
+    let temp = tempdir().expect("create temp dir");
+
+    base_command(&temp)
+        .env("MEMENTO_TEST_EMBEDDING", "1")
+        .arg("init")
+        .assert()
+        .success();
+
+    let agent_dir = temp.path().join(".memento").join("agent");
+    let user_dir = temp.path().join(".memento").join("user");
+
+    fs::create_dir_all(agent_dir.join("notes")).expect("create nested agent dir");
+    fs::create_dir_all(user_dir.join("preferences")).expect("create nested user dir");
+    fs::write(
+        agent_dir.join("notes").join("release-plan.txt"),
+        "Ship in phases",
+    )
+    .expect("write agent note");
+    fs::write(
+        user_dir.join("preferences").join("editor.json"),
+        "{\"tabSize\": 2}",
+    )
+    .expect("write user preference");
+
+    let mut server = start_server(&temp, true);
+
+    let agent_show = base_command(&temp)
+        .args(["show", "mem://agent/notes/release-plan.txt"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let agent_show_stdout = strip_ansi(&String::from_utf8(agent_show).expect("stdout is utf-8"));
+    assert!(agent_show_stdout.contains("mem://agent/notes/release-plan.txt"));
+    assert!(agent_show_stdout.contains(".memento/agent/notes/release-plan.txt"));
+
+    let user_show = base_command(&temp)
+        .args(["show", "mem://user/preferences/editor.json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let user_show_stdout = strip_ansi(&String::from_utf8(user_show).expect("stdout is utf-8"));
+    assert!(user_show_stdout.contains("mem://user/preferences/editor.json"));
+    assert!(user_show_stdout.contains(".memento/user/preferences/editor.json"));
+
+    let server_stdout =
+        fs::read_to_string(temp.path().join("server.stdout.log")).expect("read server stdout log");
+    assert!(server_stdout.contains(
+        "memento serve auto-indexing agent item mem://agent/notes/release-plan.txt from .memento/agent/notes/release-plan.txt"
+    ));
+    assert!(server_stdout.contains(
+        "memento serve auto-indexing user item mem://user/preferences/editor.json from .memento/user/preferences/editor.json"
+    ));
 
     stop_server(&mut server);
 }
@@ -320,7 +382,7 @@ fn doctor_reports_workspace_and_cache_information() {
         .assert()
         .success();
 
-    let mut server = start_server(&temp, false);
+    let mut server = start_server(&temp, true);
 
     let output = base_command(&temp)
         .arg("doctor")
@@ -339,10 +401,10 @@ fn doctor_reports_workspace_and_cache_information() {
     assert!(stdout.contains("agent_dir ok .memento/agent"));
     assert!(stdout.contains("model_cache missing"));
     assert!(stdout.contains("config_load ok version=4 model=bge-small-en-v1.5 dim=384"));
-    assert!(stdout.contains("item_count 0"));
+    assert!(stdout.contains("item_count 1"));
     assert!(stdout.contains("workspace_embedding model=bge-small-en-v1.5 dim=384"));
     assert!(stdout.contains("active_embedding bge-small-en-v1.5 dim=384"));
-    assert!(stdout.contains("test_embedding disabled"));
+    assert!(stdout.contains("test_embedding enabled"));
 
     stop_server(&mut server);
 }
@@ -495,7 +557,7 @@ fn mcp_tool_list_is_available_on_server_port_plus_one() {
                     "capabilities": {},
                     "clientInfo": {
                         "name": "cli-flow-test",
-                        "version": "0.1.0"
+                        "version": "0.1.1"
                     }
                 }
             })
@@ -575,7 +637,7 @@ fn mcp_resources_list_and_read_mem_uri() {
                     "capabilities": {},
                     "clientInfo": {
                         "name": "cli-flow-test",
-                        "version": "0.1.0"
+                        "version": "0.1.1"
                     }
                 }
             })
@@ -667,7 +729,7 @@ fn mcp_resource_templates_expose_mem_namespace_patterns() {
                     "capabilities": {},
                     "clientInfo": {
                         "name": "cli-flow-test",
-                        "version": "0.1.0"
+                        "version": "0.1.1"
                     }
                 }
             })
@@ -752,7 +814,7 @@ fn mcp_tools_call_show_returns_structured_result() {
                     "capabilities": {},
                     "clientInfo": {
                         "name": "cli-flow-test",
-                        "version": "0.1.0"
+                        "version": "0.1.1"
                     }
                 }
             })
@@ -1010,7 +1072,7 @@ fn remember_file_preserves_text_extension_and_indexes_item() {
     );
 
     let output = base_command(&temp)
-        .args(["show", "mem://agent/skills/sample-copy"])
+        .args(["show", "mem://agent/skills/sample-copy.txt"])
         .assert()
         .success()
         .get_output()
@@ -1018,7 +1080,7 @@ fn remember_file_preserves_text_extension_and_indexes_item() {
         .clone();
 
     let stdout = strip_ansi(&String::from_utf8(output).expect("stdout is utf-8"));
-    assert!(stdout.contains("mem://agent/skills/sample-copy"));
+    assert!(stdout.contains("mem://agent/skills/sample-copy.txt"));
     assert!(stdout.contains(".memento/agent/skills/sample-copy.txt"));
 
     stop_server(&mut server);
@@ -1059,7 +1121,7 @@ fn remember_inline_text_creates_user_item() {
     );
 
     let output = base_command(&temp)
-        .args(["show", "mem://user/preferences/writing-style"])
+        .args(["show", "mem://user/preferences/writing-style.md"])
         .assert()
         .success()
         .get_output()
@@ -1067,7 +1129,7 @@ fn remember_inline_text_creates_user_item() {
         .clone();
 
     let stdout = strip_ansi(&String::from_utf8(output).expect("stdout is utf-8"));
-    assert!(stdout.contains("mem://user/preferences/writing-style"));
+    assert!(stdout.contains("mem://user/preferences/writing-style.md"));
     assert!(stdout.contains("user_item"));
     assert!(stdout.contains(".memento/user/preferences/writing-style.md"));
 
@@ -1458,7 +1520,7 @@ fn forget_removes_memory_item_and_backing_file() {
     assert!(stored.exists());
 
     let forget_output = base_command(&temp)
-        .args(["forget", "mem://agent/skills/to-remove"])
+        .args(["forget", "mem://agent/skills/to-remove.md"])
         .assert()
         .success()
         .get_output()
@@ -1466,7 +1528,7 @@ fn forget_removes_memory_item_and_backing_file() {
         .clone();
     let forget_stdout = strip_ansi(&String::from_utf8(forget_output).expect("stdout is utf-8"));
     assert!(forget_stdout.contains("item removed"));
-    assert!(forget_stdout.contains("mem://agent/skills/to-remove"));
+    assert!(forget_stdout.contains("mem://agent/skills/to-remove.md"));
     assert!(!stored.exists());
 
     let find_output = base_command(&temp)
@@ -1653,7 +1715,7 @@ fn cat_returns_memory_item_contents() {
         .success();
 
     let output = base_command(&temp)
-        .args(["cat", "mem://user/preferences/style"])
+        .args(["cat", "mem://user/preferences/style.md"])
         .assert()
         .success()
         .get_output()
@@ -1884,7 +1946,7 @@ fn ls_and_show_support_nested_user_and_agent_paths() {
         .clone();
 
     let agent_ls_stdout = strip_ansi(&String::from_utf8(agent_ls).expect("stdout is utf-8"));
-    assert!(agent_ls_stdout.contains("mem://agent/skills/rust/refactor-cli"));
+    assert!(agent_ls_stdout.contains("mem://agent/skills/rust/refactor-cli.md"));
     assert!(agent_ls_stdout.contains("file"));
 
     let nested_show = base_command(&temp)
@@ -1957,7 +2019,7 @@ fn remember_inline_text_updates_existing_item_at_same_uri() {
         .clone();
 
     let stdout = strip_ansi(&String::from_utf8(output).expect("stdout is utf-8"));
-    assert!(stdout.contains("mem://agent/skills/update-me"));
+    assert!(stdout.contains("mem://agent/skills/update-me.md"));
     assert!(stdout.contains("preview second version"));
     assert!(!stdout.contains("preview first version"));
 
@@ -2026,7 +2088,7 @@ fn remember_file_updates_existing_item_and_keeps_same_uri() {
         .clone();
 
     let stdout = strip_ansi(&String::from_utf8(output).expect("stdout is utf-8"));
-    assert!(stdout.contains("mem://user/notes/imported-item"));
+    assert!(stdout.contains("mem://user/notes/imported-item.txt"));
     assert!(stdout.contains("preview second imported version"));
     assert!(!stdout.contains("preview first imported version"));
 

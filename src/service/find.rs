@@ -11,6 +11,13 @@ use crate::repository::workspace::{INDEX_FILE, WorkspaceRepository};
 use crate::resource_state::detect_live_state_from_source;
 use crate::timing::{log_timing, timing_enabled};
 
+/// Maximum L2 distance for a match to be considered relevant.
+/// Results beyond this threshold are filtered out so that unrelated items
+/// do not appear in search results. For normalized embedding vectors the L2
+/// distance ranges from 0 (identical) to 2 (opposite); a threshold of 1.2
+/// keeps meaningfully similar results while discarding near-orthogonal noise.
+const MAX_MATCH_DISTANCE: f64 = 1.2;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FindMatch {
     pub uri: String,
@@ -57,6 +64,7 @@ pub fn execute(query: String) -> Result<FindResult> {
     let render_start = Instant::now();
     let matches = results
         .into_iter()
+        .filter(|result| result.distance <= MAX_MATCH_DISTANCE)
         .map(|result| {
             Ok(FindMatch {
                 uri: result.uri,

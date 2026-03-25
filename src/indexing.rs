@@ -57,7 +57,7 @@ pub fn index_paths(
             if !force
                 && repository
                     .get_item_by_source_path(&normalized_path)?
-                    .is_some_and(|item| item.status != "deleted")
+                    .is_some()
             {
                 report.skipped_paths.push(normalized_path);
                 continue;
@@ -149,7 +149,7 @@ pub fn reindex_resource_paths(
 
         if !absolute_path.exists() {
             if let Some(item) = repository.get_item_by_source_path(resource_path)? {
-                repository.mark_item_deleted(item.id)?;
+                repository.delete_item(item.id)?;
                 report.deleted_paths.push(resource_path.clone());
             }
             continue;
@@ -226,7 +226,6 @@ fn index_item_file(
         uri,
         namespace,
         kind,
-        status: "indexed",
         source_path: Some(source_path),
         file_size_bytes: i64::try_from(metadata.len()).ok(),
         modified_at: system_time_to_unix_timestamp(metadata.modified().ok()).as_deref(),

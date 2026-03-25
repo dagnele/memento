@@ -28,14 +28,14 @@ pub fn render(result: &LsResult) -> String {
                 render_live_state(live_state)
             ));
 
-            if needs_reindex(live_state) {
-                if let Some(source_path) = &entry.source_path {
-                    lines.push(format!(
-                        "{} {}",
-                        "action".dimmed(),
-                        format!("run `memento reindex {source_path}`").yellow()
-                    ));
-                }
+            if needs_reindex(live_state)
+                && let Some(source_path) = &entry.source_path
+            {
+                lines.push(format!(
+                    "{} {}",
+                    "action".dimmed(),
+                    format!("run `memento reindex {source_path}`").yellow()
+                ));
             }
         } else {
             lines.push(format!("{} {}", entry.uri.cyan(), entry.kind.dimmed()));

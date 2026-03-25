@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS workspace_meta (
 
 INSERT INTO workspace_meta(key, value)
 VALUES
-    ('schema_version', '5'),
+    ('schema_version', '6'),
     ('vector_extension', 'sqlite-vec')
 ON CONFLICT(key) DO UPDATE SET value = excluded.value;
 
@@ -32,7 +32,6 @@ CREATE TABLE IF NOT EXISTS items (
     uri TEXT NOT NULL UNIQUE,
     namespace TEXT NOT NULL,
     kind TEXT NOT NULL,
-    status TEXT NOT NULL,
     source_path TEXT UNIQUE,
     file_size_bytes INTEGER,
     modified_at TEXT,
@@ -77,7 +76,6 @@ pub struct NewItem<'a> {
     pub uri: &'a str,
     pub namespace: &'a str,
     pub kind: &'a str,
-    pub status: &'a str,
     pub source_path: Option<&'a str>,
     pub file_size_bytes: Option<i64>,
     pub modified_at: Option<&'a str>,
@@ -89,7 +87,6 @@ pub struct ItemRecord {
     pub uri: String,
     pub namespace: String,
     pub kind: String,
-    pub status: String,
     pub source_path: Option<String>,
     pub file_size_bytes: Option<i64>,
     pub modified_at: Option<String>,
@@ -167,8 +164,7 @@ impl WorkspaceRepository {
             DROP TABLE IF EXISTS vector_embeddings;
             CREATE VIRTUAL TABLE vector_embeddings USING vec0(
                 span_id INTEGER PRIMARY KEY,
-                embedding FLOAT[{embedding_dimension}],
-                active BOOLEAN
+                embedding FLOAT[{embedding_dimension}]
             );
             "#
         );
@@ -224,12 +220,11 @@ impl WorkspaceRepository {
         self.connection
             .execute(
                 r#"
-                INSERT INTO items (uri, namespace, kind, status, source_path, file_size_bytes, modified_at)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                INSERT INTO items (uri, namespace, kind, source_path, file_size_bytes, modified_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                 ON CONFLICT(uri) DO UPDATE SET
                     namespace = excluded.namespace,
                     kind = excluded.kind,
-                    status = excluded.status,
                     source_path = excluded.source_path,
                     file_size_bytes = excluded.file_size_bytes,
                     modified_at = excluded.modified_at,
@@ -239,7 +234,6 @@ impl WorkspaceRepository {
                     item.uri,
                     item.namespace,
                     item.kind,
-                    item.status,
                     item.source_path,
                     item.file_size_bytes,
                     item.modified_at,
@@ -305,7 +299,7 @@ impl WorkspaceRepository {
         self.connection
             .query_row(
                 r#"
-                SELECT id, uri, namespace, kind, status, source_path, file_size_bytes, modified_at, created_at, updated_at
+                SELECT id, uri, namespace, kind, source_path, file_size_bytes, modified_at, created_at, updated_at
                 FROM items
                 WHERE source_path = ?1
                 "#,
@@ -340,26 +334,6 @@ impl WorkspaceRepository {
                 ])
                 .context("failed to insert vector span")?;
         }
-
-        Ok(())
-    }
-
-    pub fn mark_item_deleted(&self, item_id: i64) -> Result<()> {
-        self.clear_item_vectors(item_id)?;
-
-        self.connection
-            .execute(
-                r#"
-                UPDATE items
-                SET status = 'deleted',
-                    file_size_bytes = NULL,
-                    modified_at = NULL,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?1
-                "#,
-                params![item_id],
-            )
-            .context("failed to mark item as deleted")?;
 
         Ok(())
     }
@@ -400,16 +374,16 @@ impl WorkspaceRepository {
     pub fn replace_vector_embedding(&self, span_id: i64, embedding: &[u8]) -> Result<()> {
         self.connection
             .execute(
-                "UPDATE vector_embeddings SET active = 0 WHERE span_id = ?1",
+                "DELETE FROM vector_embeddings WHERE span_id = ?1",
                 params![span_id],
             )
-            .context("failed to clear existing vector embedding")?;
+            .context("failed to delete existing vector embedding")?;
 
         self.connection
             .execute(
                 r#"
-                INSERT INTO vector_embeddings (span_id, embedding, active)
-                VALUES (?1, ?2, 1)
+                INSERT INTO vector_embeddings (span_id, embedding)
+                VALUES (?1, ?2)
                 "#,
                 params![span_id, embedding],
             )
@@ -431,7 +405,6 @@ impl WorkspaceRepository {
                     SELECT span_id, distance
                     FROM vector_embeddings
                     WHERE embedding MATCH ?1
-                      AND active = 1
                       AND k = ?2
                 )
                 SELECT items.uri, items.source_path, items.namespace, items.kind,
@@ -441,7 +414,6 @@ impl WorkspaceRepository {
                 FROM knn_matches
                 INNER JOIN vector_spans ON vector_spans.id = knn_matches.span_id
                 INNER JOIN items ON items.id = vector_spans.item_id
-                WHERE items.status != 'deleted'
                 ORDER BY knn_matches.distance ASC
                 "#,
             )
@@ -474,7 +446,7 @@ impl WorkspaceRepository {
             .connection
             .prepare(
                 r#"
-                SELECT id, uri, namespace, kind, status, source_path, file_size_bytes, modified_at, created_at, updated_at
+                SELECT id, uri, namespace, kind, source_path, file_size_bytes, modified_at, created_at, updated_at
                 FROM items
                 ORDER BY uri ASC
                 "#,
@@ -499,7 +471,7 @@ impl WorkspaceRepository {
         self.connection
             .query_row(
                 r#"
-                SELECT id, uri, namespace, kind, status, source_path, file_size_bytes, modified_at, created_at, updated_at
+                SELECT id, uri, namespace, kind, source_path, file_size_bytes, modified_at, created_at, updated_at
                 FROM items
                 WHERE uri = ?1
                 "#,
@@ -520,10 +492,10 @@ impl WorkspaceRepository {
         for span_id in span_ids {
             self.connection
                 .execute(
-                    "UPDATE vector_embeddings SET active = 0 WHERE span_id = ?1",
+                    "DELETE FROM vector_embeddings WHERE span_id = ?1",
                     params![span_id],
                 )
-                .context("failed to clear item vector embeddings")?;
+                .context("failed to delete item vector embeddings")?;
         }
 
         self.connection
@@ -556,12 +528,11 @@ fn map_item_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ItemRecord> {
         uri: row.get(1)?,
         namespace: row.get(2)?,
         kind: row.get(3)?,
-        status: row.get(4)?,
-        source_path: row.get(5)?,
-        file_size_bytes: row.get(6)?,
-        modified_at: row.get(7)?,
-        created_at: row.get(8)?,
-        updated_at: row.get(9)?,
+        source_path: row.get(4)?,
+        file_size_bytes: row.get(5)?,
+        modified_at: row.get(6)?,
+        created_at: row.get(7)?,
+        updated_at: row.get(8)?,
     })
 }
 

@@ -34,7 +34,6 @@ fn render_item_table(item: &ShowItem) -> Table {
     table.add_row(vec!["uri", item.uri.as_str()]);
     table.add_row(vec!["namespace", item.namespace.as_str()]);
     table.add_row(vec!["kind", item.kind.as_str()]);
-    table.add_row(vec!["status", item.status.as_str()]);
     table.add_row(vec!["live_state", item.live_state.as_str()]);
     if needs_reindex(&item.live_state) {
         table.add_row(vec![

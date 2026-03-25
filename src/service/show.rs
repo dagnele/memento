@@ -18,7 +18,6 @@ pub struct ShowItem {
     pub uri: String,
     pub namespace: String,
     pub kind: String,
-    pub status: String,
     pub live_state: String,
     pub source_path: String,
     pub file_size_bytes: String,
@@ -77,7 +76,6 @@ fn map_item(
         uri: item.uri,
         namespace: item.namespace,
         kind: item.kind,
-        status: item.status,
         live_state: live_state.as_str().to_string(),
         source_path: item.source_path.unwrap_or_else(|| "-".to_string()),
         file_size_bytes: item

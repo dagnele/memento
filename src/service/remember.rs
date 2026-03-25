@@ -52,11 +52,12 @@ pub fn execute(
         .with_context(|| format!("failed to write `{}`", workspace_path.display()))?;
 
     let indexed_source_path = normalize_source_path(&workspace_path)?;
+    let uri_path = namespace_uri_path(namespace, &workspace_path)?;
     let uri = index_namespace_item(
         &repository,
         &config,
         namespace,
-        &relative_path,
+        &uri_path,
         &indexed_source_path,
     )?;
 
@@ -177,6 +178,23 @@ fn normalize_source_path(path: &Path) -> Result<String> {
         .map(|component| component.as_os_str().to_string_lossy().replace('\\', "/"))
         .collect::<Vec<_>>()
         .join("/"))
+}
+
+fn namespace_uri_path(namespace: Namespace, workspace_path: &Path) -> Result<String> {
+    let base = match namespace {
+        Namespace::User => USER_DIR,
+        Namespace::Agent => AGENT_DIR,
+        Namespace::Resources => bail!("resources namespace is not valid for remember"),
+    };
+    let relative = workspace_path
+        .strip_prefix(base)
+        .context("workspace path should start with namespace directory")?;
+    let normalized = relative
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().replace('\\', "/"))
+        .collect::<Vec<_>>()
+        .join("/");
+    Ok(normalized)
 }
 
 fn has_extension(path: &str) -> bool {
