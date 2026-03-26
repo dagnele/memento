@@ -18,6 +18,11 @@ pub fn render(result: &ShowResult) -> String {
 
     if let Some(item) = &result.item {
         lines.push(format!("{}", render_item_table(item)));
+        if let Some(action) = render_action(&item.live_state, &item.source_path, &item.uri) {
+            lines.push(String::new());
+            lines.push(format!("{}", "actions".dimmed()));
+            lines.push(format!("  {}. {}", 1, action.yellow()));
+        }
         return lines.join("\n");
     }
 
@@ -35,12 +40,6 @@ fn render_item_table(item: &ShowItem) -> Table {
     table.add_row(vec!["namespace", item.namespace.as_str()]);
     table.add_row(vec!["kind", item.kind.as_str()]);
     table.add_row(vec!["live_state", item.live_state.as_str()]);
-    if needs_reindex(&item.live_state) {
-        table.add_row(vec![
-            Cell::new("action"),
-            Cell::new(format!("run `memento reindex {}`", item.source_path)),
-        ]);
-    }
     table.add_row(vec![
         Cell::new("source_path"),
         Cell::new(item.source_path.as_str()),
@@ -96,6 +95,10 @@ fn base_table() -> Table {
     table
 }
 
-fn needs_reindex(state: &str) -> bool {
-    matches!(state, "modified" | "deleted")
+fn render_action(state: &str, source_path: &str, uri: &str) -> Option<String> {
+    match state {
+        "modified" => Some(format!("run `memento reindex {source_path}`")),
+        "deleted" => Some(format!("run `memento rm {uri}`")),
+        _ => None,
+    }
 }
