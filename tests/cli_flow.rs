@@ -1875,7 +1875,7 @@ fn reindex_marks_missing_resource_deleted_and_removes_it_from_search() {
 
     let reindex_stdout = strip_ansi(&String::from_utf8(reindex_output).expect("stdout is utf-8"));
     assert!(reindex_stdout.contains("refreshed 0 resource(s)"));
-    assert!(reindex_stdout.contains("missing notes.txt"));
+    assert!(reindex_stdout.contains("removed notes.txt"));
 
     let find_output = base_command(&temp)
         .env("MEMENTO_TEST_EMBEDDING", "1")

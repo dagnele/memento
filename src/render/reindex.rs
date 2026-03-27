@@ -15,7 +15,7 @@ pub fn render(result: &ReindexResult) -> String {
     }
 
     for path in &result.deleted_paths {
-        lines.push(format!("{} {}", "missing".dimmed(), path.red()));
+        lines.push(format!("{} {}", "removed".dimmed(), path.red()));
     }
 
     lines.join("\n")
