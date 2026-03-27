@@ -35,7 +35,7 @@ memento find <query>
 ### Linux / macOS
 
 ```bash
-curl -LsSf https://github.com/dagnele/memento/releases/latest/download/memento-x86_64-unknown-linux-musl.tar.gz | tar -xz -C ~/.local/bin
+curl -LsSf https://github.com/dagnele/memento/releases/latest/download/memento-x86_64-unknown-linux-gnu.tar.gz | tar -xz -C ~/.local/bin
 ```
 
 ### Windows (PowerShell)
