@@ -30,6 +30,22 @@ memento show <uri>
 memento find <query>
 ```
 
+## Installation
+
+### Linux / macOS
+
+```bash
+curl -LsSf https://github.com/dagnele/memento/releases/latest/download/memento-x86_64-unknown-linux-musl.tar.gz | tar -xz -C ~/.local/bin
+```
+
+### Windows (PowerShell)
+
+```powershell
+irm https://github.com/dagnele/memento/releases/latest/download/install.ps1 | iex
+```
+
+Or download a release from [GitHub Releases](https://github.com/dagnele/memento/releases/latest).
+
 ## Quick start
 
 Build the CLI:
