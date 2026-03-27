@@ -49,7 +49,7 @@ function Main {
     Remove-Item -Path $TempDir -Recurse -Force -ErrorAction SilentlyContinue
 
     Write-Host "Memento installed successfully!" -ForegroundColor Green
-    Write-Host "Run 'memento --version' to verify."
+    Write-Host "Run 'memento --help' to verify."
 }
 
 $global:LASTEXITCODE = 0
