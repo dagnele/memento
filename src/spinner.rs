@@ -1,66 +1,33 @@
-use std::io::{IsTerminal, Write};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
 use std::time::Duration;
 
-const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const FRAME_INTERVAL: Duration = Duration::from_millis(80);
+use indicatif::{ProgressBar, ProgressStyle};
 
 pub struct Spinner {
-    active: Arc<AtomicBool>,
-    handle: Option<thread::JoinHandle<()>>,
+    bar: ProgressBar,
 }
 
 impl Spinner {
     pub fn start(label: &str) -> Self {
-        let active = Arc::new(AtomicBool::new(true));
-        let thread_active = Arc::clone(&active);
-        let message = format!("memento {label}");
+        let bar = ProgressBar::new_spinner();
+        bar.set_style(
+            ProgressStyle::default_spinner()
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", " "])
+                .template("{spinner} {msg}")
+                .expect("valid spinner template"),
+        );
+        bar.set_message(format!("memento {label}"));
+        bar.enable_steady_tick(Duration::from_millis(80));
 
-        let handle = thread::spawn(move || {
-            if !std::io::stderr().is_terminal() {
-                return;
-            }
-
-            let mut frame_index = 0;
-            let stderr = std::io::stderr();
-
-            while thread_active.load(Ordering::Relaxed) {
-                let frame = SPINNER_FRAMES[frame_index % SPINNER_FRAMES.len()];
-                let mut lock = stderr.lock();
-                let _ = write!(lock, "\r{frame} {message}");
-                let _ = lock.flush();
-                drop(lock);
-
-                frame_index += 1;
-                thread::sleep(FRAME_INTERVAL);
-            }
-
-            let mut lock = stderr.lock();
-            let _ = write!(lock, "\r{}\r", " ".repeat(message.len() + 4));
-            let _ = lock.flush();
-        });
-
-        Spinner {
-            active,
-            handle: Some(handle),
-        }
+        Spinner { bar }
     }
 
-    pub fn stop(mut self) {
-        self.active.store(false, Ordering::Relaxed);
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
-        }
+    pub fn stop(self) {
+        self.bar.finish_and_clear();
     }
 }
 
 impl Drop for Spinner {
     fn drop(&mut self) {
-        self.active.store(false, Ordering::Relaxed);
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
-        }
+        self.bar.finish_and_clear();
     }
 }
