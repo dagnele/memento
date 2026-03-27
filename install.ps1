@@ -1,6 +1,6 @@
 param(
     [string]$Version = "v0.1.2",
-    [string]$InstallPath = "C:\Users\danielegaldi\AppData\Local\Memento"
+    [string]$InstallPath = "$env:LOCALAPPDATA\Memento"
 )
 
 $ErrorActionPreference = "Stop"
