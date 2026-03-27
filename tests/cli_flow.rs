@@ -192,13 +192,14 @@ fn init_writes_default_config() {
     assert!(config.contains("segment_line_count = 40"));
     assert!(config.contains("segment_line_overlap = 10"));
     assert!(config.contains("server_port = 4000"));
-    assert!(temp
-        .path()
-        .join(".memento")
-        .join("agent")
-        .join("skills")
-        .join("memento.md")
-        .exists());
+    assert!(
+        temp.path()
+            .join(".memento")
+            .join("agent")
+            .join("skills")
+            .join("memento.md")
+            .exists()
+    );
 }
 
 #[test]
@@ -238,8 +239,10 @@ fn serve_indexes_default_agent_skill_guide() {
     assert!(stdout.contains("## Using the CLI"));
     assert!(stdout.contains("Run `memento serve` before using server-backed commands"));
     assert!(stdout.contains("## Using the MCP server"));
-    assert!(stdout
-        .contains("The MCP endpoint shares the same `http://127.0.0.1:<server_port>` address"));
+    assert!(
+        stdout
+            .contains("The MCP endpoint shares the same `http://127.0.0.1:<server_port>` address")
+    );
     assert!(stdout.contains("### MCP tools"));
     assert!(stdout.contains("- `remember`"));
     assert!(stdout.contains("- `show`"));
@@ -865,8 +868,10 @@ fn models_lists_supported_embedding_models() {
     assert!(stdout.contains(
         "bge-base-en-v1.5 dim=768 recommended use=balanced default for English notes and docs"
     ));
-    assert!(stdout
-        .contains("bge-small-en-v1.5 dim=384 use=fast lightweight indexing on local machines"));
+    assert!(
+        stdout
+            .contains("bge-small-en-v1.5 dim=384 use=fast lightweight indexing on local machines")
+    );
     assert!(stdout.contains("bge-large-en-v1.5 dim=1024 use=highest-quality English retrieval"));
     assert!(stdout.contains(
         "jina-embeddings-v2-base-code dim=768 use=code-heavy repositories and source search"
@@ -1039,13 +1044,14 @@ fn remember_file_preserves_text_extension_and_indexes_item() {
         .assert()
         .success();
 
-    assert!(temp
-        .path()
-        .join(".memento")
-        .join("agent")
-        .join("skills")
-        .join("sample-copy.txt")
-        .exists());
+    assert!(
+        temp.path()
+            .join(".memento")
+            .join("agent")
+            .join("skills")
+            .join("sample-copy.txt")
+            .exists()
+    );
 
     let output = base_command(&temp)
         .args(["show", "mem://agent/skills/sample-copy.txt"])
