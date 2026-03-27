@@ -17,7 +17,7 @@ function Main {
 
     New-Item -ItemType Directory -Path $InstallPath -Force | Out-Null
 
-    $AssetName = "memento-x86_64-pc-windows-msvc.zip"
+    $AssetName = "memento-$Version-x86_64-pc-windows-msvc.zip"
     $DownloadUrl = "https://github.com/dagnele/memento/releases/download/$Version/$AssetName"
     $ZipPath = Join-Path $TempDir $AssetName
     $ExtractPath = Join-Path $TempDir "extracted"
@@ -29,7 +29,8 @@ function Main {
     Write-Host "Extracting..." -ForegroundColor Yellow
     Expand-Archive -Path $ZipPath -DestinationPath $ExtractPath -Force
 
-    $ExePath = Join-Path $ExtractPath "memento.exe"
+    $StagingDir = "memento-$Version-x86_64-pc-windows-msvc"
+    $ExePath = Join-Path $ExtractPath "$StagingDir\memento.exe"
     Copy-Item -Path $ExePath -Destination $InstallPath -Force
 
     $MementoBinPath = $InstallPath
