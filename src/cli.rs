@@ -3,7 +3,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Parser)]
-#[command(name = "memento")]
+#[command(name = "memento", version)]
 #[command(about = "A fast, local CLI for context indexing")]
 pub struct Cli {
     #[command(subcommand)]
