@@ -65,6 +65,26 @@ pub enum CliCommand {
     },
 }
 
+impl CliCommand {
+    pub fn label(&self) -> &'static str {
+        match self {
+            CliCommand::Init { .. } => "init",
+            CliCommand::Serve { .. } => "serve",
+            CliCommand::Doctor => "doctor",
+            CliCommand::Models => "models",
+            CliCommand::Add { .. } => "add",
+            CliCommand::Rm { .. } => "rm",
+            CliCommand::Remember { .. } => "remember",
+            CliCommand::Reindex { .. } => "reindex",
+            CliCommand::Forget { .. } => "forget",
+            CliCommand::Ls { .. } => "ls",
+            CliCommand::Cat { .. } => "cat",
+            CliCommand::Show { .. } => "show",
+            CliCommand::Find { .. } => "find",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq, ValueEnum, Serialize, Deserialize, JsonSchema)]
 pub enum MemoryNamespace {
     User,

@@ -12,6 +12,7 @@ mod repository;
 mod resource_state;
 mod server;
 mod service;
+mod spinner;
 mod text_file;
 mod timing;
 mod uri;
@@ -42,8 +43,12 @@ fn main() -> Result<()> {
         CliCommand::Serve { debug } => server::serve(debug),
         command => {
             let total_start = Instant::now();
+            let label = command.label();
             let request = ExecuteRequest::try_from(command).map_err(anyhow::Error::msg)?;
-            let output = client::execute(&request)?;
+            let spinner = spinner::Spinner::start(label);
+            let result = client::execute(&request);
+            spinner.stop();
+            let output = result?;
             let print_start = Instant::now();
             println!("{output}");
             log_timing("client_stdout_print", print_start.elapsed());
