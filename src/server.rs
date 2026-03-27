@@ -1,20 +1,30 @@
 use std::fs;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use anyhow::{Context, Result, anyhow};
-use tiny_http::{Header, Method, Response, Server, StatusCode};
+use anyhow::{Context, Result};
+use axum::extract::State;
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
+use axum::routing::{get, post};
+use axum::{Json, Router};
+use tokio_util::sync::CancellationToken;
 
 use crate::bootstrap;
 use crate::config::WorkspaceConfig;
 use crate::dispatch;
 use crate::indexing::index_namespace_item;
 use crate::mcp;
-use crate::protocol::{ErrorResponse, ExecuteRequest, RemoteCommand};
+use crate::protocol::{ErrorResponse, ExecuteRequest, ExecuteResponse, RemoteCommand};
 use crate::repository::workspace::{AGENT_DIR, INDEX_FILE, USER_DIR, WorkspaceRepository};
 use crate::timing::{enable_timing, timing_enabled};
 use crate::uri::Namespace;
+
+struct AppState {
+    write_lock: Mutex<()>,
+    debug: bool,
+}
 
 pub fn serve(debug: bool) -> Result<()> {
     if debug {
@@ -24,38 +34,59 @@ pub fn serve(debug: bool) -> Result<()> {
     let config = WorkspaceConfig::load()
         .context("failed to load workspace config; run `memento init` first")?;
     let address = format!("127.0.0.1:{}", config.server_port);
-    let mcp_port = config.server_port + 1;
-    let mcp_address = format!("127.0.0.1:{mcp_port}");
-    let server = Server::http(&address)
-        .map_err(|error| anyhow!(error.to_string()))
-        .with_context(|| format!("failed to bind server on {address}"))?;
-    let mcp_server = mcp::spawn_http_server(mcp_port)
-        .with_context(|| format!("failed to start MCP server on {mcp_address}"))?;
+
     ensure_namespace_items_indexed(&config)?;
-    let write_lock = Mutex::new(());
 
-    println!("memento serve listening on http://{address}");
-    println!("memento mcp listening on http://{mcp_address}");
+    let state = Arc::new(AppState {
+        write_lock: Mutex::new(()),
+        debug,
+    });
 
-    if debug {
-        eprintln!("[memento:debug] server debug logging enabled");
-    }
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("failed to build tokio runtime")?;
 
-    for mut request in server.incoming_requests() {
-        let response = match (request.method(), request.url()) {
-            (&Method::Get, "/health") => {
-                json_response(StatusCode(200), &serde_json::json!({ "status": "ok" }))
+    runtime.block_on(async {
+        let shutdown = CancellationToken::new();
+        let mcp_shutdown = shutdown.child_token();
+
+        let mcp_fallback = mcp::mcp_service(mcp_shutdown);
+
+        let app = Router::new()
+            .route("/health", get(health_handler))
+            .route("/v1/execute", post(execute_handler))
+            .fallback_service(mcp_fallback)
+            .with_state(state);
+
+        let listener = tokio::net::TcpListener::bind(&address)
+            .await
+            .with_context(|| format!("failed to bind server on {address}"))?;
+
+        println!("memento serve listening on http://{address}");
+
+        if debug {
+            eprintln!("[memento:debug] server debug logging enabled");
+        }
+
+        let server = axum::serve(listener, app).with_graceful_shutdown({
+            let shutdown = shutdown.clone();
+            async move {
+                tokio::select! {
+                    _ = shutdown.cancelled() => {}
+                    _ = tokio::signal::ctrl_c() => {
+                        shutdown.cancel();
+                    }
+                }
             }
-            (&Method::Post, "/v1/execute") => handle_execute(&mut request, &write_lock),
-            _ => json_error(StatusCode(404), "not found"),
-        };
+        });
 
-        let _ = request.respond(response);
-    }
+        if let Err(error) = server.await {
+            eprintln!("server exited with error: {error}");
+        }
 
-    mcp_server.shutdown();
-
-    Ok(())
+        Ok(())
+    })
 }
 
 fn ensure_namespace_items_indexed(config: &WorkspaceConfig) -> Result<()> {
@@ -146,86 +177,67 @@ fn normalize_source_path(path: &Path) -> Result<String> {
         .join("/"))
 }
 
-fn handle_execute(
-    request: &mut tiny_http::Request,
-    write_lock: &Mutex<()>,
-) -> Response<std::io::Cursor<Vec<u8>>> {
+async fn health_handler() -> impl IntoResponse {
+    Json(serde_json::json!({ "status": "ok" }))
+}
+
+async fn execute_handler(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<ExecuteRequest>,
+) -> impl IntoResponse {
     let request_start = Instant::now();
-    let mut body = String::new();
-
-    if let Err(error) = request.as_reader().read_to_string(&mut body) {
-        return json_error(
-            StatusCode(400),
-            &format!("failed to read request body: {error}"),
-        );
-    }
-
-    let read_body_elapsed = request_start.elapsed();
-
-    let payload: ExecuteRequest = match serde_json::from_str(&body) {
-        Ok(payload) => payload,
-        Err(error) => {
-            return json_error(
-                StatusCode(400),
-                &format!("failed to parse request body: {error}"),
-            );
-        }
-    };
-
-    let parse_elapsed = request_start.elapsed();
     let command_name = command_name(&payload.command);
+    let debug = state.debug;
 
-    if timing_enabled() {
-        eprintln!(
-            "[memento:debug] command={command_name} phase=request_read latency_ms={}",
-            read_body_elapsed.as_millis()
-        );
-        eprintln!(
-            "[memento:debug] command={command_name} phase=request_parse latency_ms={}",
-            parse_elapsed.as_millis()
-        );
-    }
+    let result: Result<ExecuteResponse, String> = tokio::task::spawn_blocking(move || {
+        let result: anyhow::Result<ExecuteResponse> = match &payload.command {
+            RemoteCommand::Add { .. }
+            | RemoteCommand::Remember { .. }
+            | RemoteCommand::Reindex { .. } => {
+                let lock_start = Instant::now();
+                let _guard = match state.write_lock.lock() {
+                    Ok(guard) => guard,
+                    Err(_) => return Err("write lock poisoned".to_string()),
+                };
+                if timing_enabled() {
+                    eprintln!(
+                        "[memento:debug] command={command_name} phase=write_lock_wait latency_ms={}",
+                        lock_start.elapsed().as_millis()
+                    );
+                }
 
-    let result: anyhow::Result<crate::protocol::ExecuteResponse> = match &payload.command {
-        RemoteCommand::Add { .. }
-        | RemoteCommand::Remember { .. }
-        | RemoteCommand::Reindex { .. } => {
-            let lock_start = Instant::now();
-            let _guard = match write_lock.lock() {
-                Ok(guard) => guard,
-                Err(_) => return json_error(StatusCode(500), "write lock poisoned"),
-            };
-            if timing_enabled() {
-                eprintln!(
-                    "[memento:debug] command={command_name} phase=write_lock_wait latency_ms={}",
-                    lock_start.elapsed().as_millis()
-                );
+                let execute_start = Instant::now();
+                let result = dispatch::execute_remote_structured(payload.command);
+                if timing_enabled() {
+                    eprintln!(
+                        "[memento:debug] command={command_name} phase=execute latency_ms={}",
+                        execute_start.elapsed().as_millis()
+                    );
+                }
+                result
             }
-
-            let execute_start = Instant::now();
-            let result = dispatch::execute_remote_structured(payload.command);
-            if timing_enabled() {
-                eprintln!(
-                    "[memento:debug] command={command_name} phase=execute latency_ms={}",
-                    execute_start.elapsed().as_millis()
-                );
+            _ => {
+                let execute_start = Instant::now();
+                let result = dispatch::execute_remote_structured(payload.command);
+                if timing_enabled() {
+                    eprintln!(
+                        "[memento:debug] command={command_name} phase=execute latency_ms={}",
+                        execute_start.elapsed().as_millis()
+                    );
+                }
+                result
             }
-            result
+        };
+
+        match result {
+            Ok(response) => Ok(response),
+            Err(error) => Err(error.to_string()),
         }
-        _ => {
-            let execute_start = Instant::now();
-            let result = dispatch::execute_remote_structured(payload.command);
-            if timing_enabled() {
-                eprintln!(
-                    "[memento:debug] command={command_name} phase=execute latency_ms={}",
-                    execute_start.elapsed().as_millis()
-                );
-            }
-            result
-        }
-    };
+    })
+    .await
+    .unwrap_or_else(|error| Err(format!("task panicked: {error}")));
 
-    if timing_enabled() {
+    if debug {
         let status = if result.is_ok() { "ok" } else { "error" };
         eprintln!(
             "[memento:debug] command={command_name} status={status} total_latency_ms={}",
@@ -234,33 +246,17 @@ fn handle_execute(
     }
 
     match result {
-        Ok(output) => json_response(StatusCode(200), &output),
-        Err(error) => json_error(StatusCode(500), &error.to_string()),
+        Ok(response) => (
+            StatusCode::OK,
+            Json(serde_json::to_value(&response).unwrap()),
+        )
+            .into_response(),
+        Err(message) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::to_value(&ErrorResponse { error: message }).unwrap()),
+        )
+            .into_response(),
     }
-}
-
-fn json_response<T: serde::Serialize>(
-    status: StatusCode,
-    payload: &T,
-) -> Response<std::io::Cursor<Vec<u8>>> {
-    let body = serde_json::to_vec(payload)
-        .unwrap_or_else(|_| b"{\"error\":\"serialization failed\"}".to_vec());
-    let mut response = Response::from_data(body).with_status_code(status);
-
-    if let Ok(header) = Header::from_bytes("Content-Type", "application/json") {
-        response.add_header(header);
-    }
-
-    response
-}
-
-fn json_error(status: StatusCode, message: &str) -> Response<std::io::Cursor<Vec<u8>>> {
-    json_response(
-        status,
-        &ErrorResponse {
-            error: message.to_string(),
-        },
-    )
 }
 
 fn command_name(command: &RemoteCommand) -> &'static str {

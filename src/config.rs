@@ -66,10 +66,6 @@ impl WorkspaceConfig {
             profile.dimension
         );
         ensure!(self.server_port > 0, "server_port must be greater than 0");
-        ensure!(
-            self.server_port < u16::MAX,
-            "server_port must be less than 65535"
-        );
         Ok(())
     }
 }

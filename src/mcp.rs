@@ -1,9 +1,5 @@
-use std::net::SocketAddr;
 use std::sync::Arc;
-use std::thread;
 
-use anyhow::{Context, Result, anyhow};
-use axum::Router;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
@@ -18,81 +14,30 @@ use rmcp::{RoleServer, ServerHandler, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
-use tokio::runtime::Builder;
 use tokio_util::sync::CancellationToken;
 
 use crate::cli::MemoryNamespace;
 use crate::repository::workspace::{INDEX_FILE, WorkspaceRepository};
 use crate::service;
 
-#[derive(Debug, Clone)]
-pub struct McpServerHandle {
+pub fn mcp_service(
     shutdown: CancellationToken,
-}
-
-impl McpServerHandle {
-    pub fn shutdown(self) {
-        self.shutdown.cancel();
-    }
-}
-
-pub fn spawn_http_server(port: u16) -> Result<McpServerHandle> {
-    let shutdown = CancellationToken::new();
-    let child_shutdown = shutdown.child_token();
-    let address = SocketAddr::from(([127, 0, 0, 1], port));
-
-    thread::Builder::new()
-        .name("memento-mcp".to_string())
-        .spawn(move || {
-            let runtime = match Builder::new_multi_thread().enable_all().build() {
-                Ok(runtime) => runtime,
-                Err(error) => {
-                    eprintln!("failed to start MCP runtime: {error}");
-                    return;
-                }
-            };
-
-            runtime.block_on(async move {
-                let session_manager = Arc::new(LocalSessionManager::default());
-                let service: StreamableHttpService<MementoMcpServer, LocalSessionManager> =
-                    StreamableHttpService::new(
-                        || Ok(MementoMcpServer::new()),
-                        session_manager,
-                        StreamableHttpServerConfig {
-                            stateful_mode: false,
-                            json_response: true,
-                            cancellation_token: child_shutdown.clone(),
-                            ..Default::default()
-                        },
-                    );
-
-                let app = Router::new().fallback_service(service);
-
-                let listener = match tokio::net::TcpListener::bind(address).await {
-                    Ok(listener) => listener,
-                    Err(error) => {
-                        eprintln!("failed to bind MCP server on {address}: {error}");
-                        return;
-                    }
-                };
-
-                let server = axum::serve(listener, app).with_graceful_shutdown(async move {
-                    child_shutdown.cancelled_owned().await;
-                });
-
-                if let Err(error) = server.await {
-                    eprintln!("MCP server exited with error: {error}");
-                }
-            });
-        })
-        .map_err(|error| anyhow!(error.to_string()))
-        .with_context(|| format!("failed to spawn MCP server thread for {address}"))?;
-
-    Ok(McpServerHandle { shutdown })
+) -> StreamableHttpService<MementoMcpServer, LocalSessionManager> {
+    let session_manager = Arc::new(LocalSessionManager::default());
+    StreamableHttpService::new(
+        || Ok(MementoMcpServer::new()),
+        session_manager,
+        StreamableHttpServerConfig {
+            stateful_mode: false,
+            json_response: true,
+            cancellation_token: shutdown,
+            ..Default::default()
+        },
+    )
 }
 
 #[derive(Debug, Clone)]
-struct MementoMcpServer {
+pub(crate) struct MementoMcpServer {
     tool_router: ToolRouter<Self>,
 }
 

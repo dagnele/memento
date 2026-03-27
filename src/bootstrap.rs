@@ -28,7 +28,7 @@ Use `memento` to store and search local project knowledge.
 ## Using the MCP server
 
 - Start `memento serve` to expose both the local API and the MCP endpoint
-- The MCP endpoint listens on `http://127.0.0.1:<server_port + 1>`
+- The MCP endpoint shares the same `http://127.0.0.1:<server_port>` address
 - Use MCP tools for actions like `add`, `remember`, `forget`, `show`, and `find`
 - Use MCP resources for `mem://...` content, and resource templates like `mem://resources/{path}`
 
@@ -63,7 +63,7 @@ Use `memento` to store and search local project knowledge.
 ## Notes
 
 - Start the local server with `memento serve`
-- The MCP endpoint is available on `server_port + 1`
+- The MCP endpoint is available on the same server port
 - Do not add files from `.memento/` with `memento add`
 "#;
 

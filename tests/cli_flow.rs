@@ -57,7 +57,7 @@ fn start_server_with_args(
     use std::process::Command as ProcessCommand;
 
     let exe = assert_cmd::cargo::cargo_bin("memento");
-    let port = reserve_port_pair_start();
+    let port = reserve_port();
     write_server_port(temp, port);
     let stdout_path = temp.path().join("server.stdout.log");
     let stderr_path = temp.path().join("server.stderr.log");
@@ -76,7 +76,6 @@ fn start_server_with_args(
 
     let mut child = command.spawn().expect("start server");
     wait_for_server(&mut child, port, &stdout_path, &stderr_path);
-    wait_for_server(&mut child, port + 1, &stdout_path, &stderr_path);
     child
 }
 
@@ -87,14 +86,14 @@ fn stop_server(child: &mut std::process::Child) {
 
 use std::sync::atomic::{AtomicU16, Ordering};
 
-/// Each test gets a unique, non-overlapping port pair by atomically
+/// Each test gets a unique, non-overlapping port by atomically
 /// incrementing a global counter.  This avoids the TOCTOU race of the
 /// previous bind-then-release approach that caused "os error 10048"
 /// failures when tests ran in parallel.
 static NEXT_PORT: AtomicU16 = AtomicU16::new(19000);
 
-fn reserve_port_pair_start() -> u16 {
-    NEXT_PORT.fetch_add(2, Ordering::Relaxed)
+fn reserve_port() -> u16 {
+    NEXT_PORT.fetch_add(1, Ordering::Relaxed)
 }
 
 fn write_server_port(temp: &tempfile::TempDir, port: u16) {
@@ -193,14 +192,13 @@ fn init_writes_default_config() {
     assert!(config.contains("segment_line_count = 40"));
     assert!(config.contains("segment_line_overlap = 10"));
     assert!(config.contains("server_port = 4000"));
-    assert!(
-        temp.path()
-            .join(".memento")
-            .join("agent")
-            .join("skills")
-            .join("memento.md")
-            .exists()
-    );
+    assert!(temp
+        .path()
+        .join(".memento")
+        .join("agent")
+        .join("skills")
+        .join("memento.md")
+        .exists());
 }
 
 #[test]
@@ -240,7 +238,8 @@ fn serve_indexes_default_agent_skill_guide() {
     assert!(stdout.contains("## Using the CLI"));
     assert!(stdout.contains("Run `memento serve` before using server-backed commands"));
     assert!(stdout.contains("## Using the MCP server"));
-    assert!(stdout.contains("The MCP endpoint listens on `http://127.0.0.1:<server_port + 1>`"));
+    assert!(stdout
+        .contains("The MCP endpoint shares the same `http://127.0.0.1:<server_port>` address"));
     assert!(stdout.contains("### MCP tools"));
     assert!(stdout.contains("- `remember`"));
     assert!(stdout.contains("- `show`"));
@@ -415,7 +414,7 @@ fn remote_commands_fail_cleanly_when_server_is_not_running() {
     let temp = tempdir().expect("create temp dir");
 
     base_command(&temp).arg("init").assert().success();
-    write_server_port(&temp, reserve_port_pair_start());
+    write_server_port(&temp, reserve_port());
 
     let output = base_command(&temp)
         .arg("doctor")
@@ -467,8 +466,6 @@ fn serve_debug_logs_find_timing_details() {
         fs::read_to_string(temp.path().join("server.stderr.log")).expect("read server stderr log");
 
     assert!(stderr.contains("[memento:debug] server debug logging enabled"));
-    assert!(stderr.contains("command=find phase=request_read latency_ms="));
-    assert!(stderr.contains("command=find phase=request_parse latency_ms="));
     assert!(stderr.contains("command=find phase=execute latency_ms="));
     assert!(stderr.contains("command=find status=ok total_latency_ms="));
     assert!(stderr.contains("[memento:timing] find_total="));
@@ -494,26 +491,7 @@ fn remote_commands_reject_invalid_server_port_config() {
 }
 
 #[test]
-fn serve_rejects_server_port_without_mcp_sibling_port() {
-    let temp = tempdir().expect("create temp dir");
-
-    base_command(&temp).arg("init").assert().success();
-    replace_config_line(&temp, "server_port = ", "server_port = 65535");
-
-    let output = base_command(&temp)
-        .arg("doctor")
-        .assert()
-        .failure()
-        .get_output()
-        .stderr
-        .clone();
-
-    let stderr = strip_ansi(&String::from_utf8(output).expect("stderr is utf-8"));
-    assert!(stderr.contains("server_port must be less than 65535"));
-}
-
-#[test]
-fn serve_starts_mcp_listener_on_server_port_plus_one() {
+fn serve_exposes_mcp_on_server_port() {
     let temp = tempdir().expect("create temp dir");
 
     base_command(&temp)
@@ -525,13 +503,13 @@ fn serve_starts_mcp_listener_on_server_port_plus_one() {
     let mut server = start_server(&temp, true);
     let port = read_config_server_port(&temp);
 
-    assert!(TcpStream::connect(("127.0.0.1", port + 1)).is_ok());
+    assert!(TcpStream::connect(("127.0.0.1", port)).is_ok());
 
     stop_server(&mut server);
 }
 
 #[test]
-fn mcp_tool_list_is_available_on_server_port_plus_one() {
+fn mcp_tool_list_is_available_on_server_port() {
     let temp = tempdir().expect("create temp dir");
 
     base_command(&temp)
@@ -545,7 +523,7 @@ fn mcp_tool_list_is_available_on_server_port_plus_one() {
 
     let client = Client::builder().build().expect("build reqwest client");
     let response = client
-        .post(format!("http://127.0.0.1:{}", port + 1))
+        .post(format!("http://127.0.0.1:{}", port))
         .header("Accept", "application/json, text/event-stream")
         .header("Content-Type", "application/json")
         .body(
@@ -576,7 +554,7 @@ fn mcp_tool_list_is_available_on_server_port_plus_one() {
     assert!(body.contains("\"protocolVersion\":\"2025-06-18\""));
 
     let response = client
-        .post(format!("http://127.0.0.1:{}", port + 1))
+        .post(format!("http://127.0.0.1:{}", port))
         .header("Accept", "application/json, text/event-stream")
         .header("Content-Type", "application/json")
         .header("MCP-Protocol-Version", "2025-06-18")
@@ -625,7 +603,7 @@ fn mcp_resources_list_and_read_mem_uri() {
     let client = Client::builder().build().expect("build reqwest client");
 
     let initialize = client
-        .post(format!("http://127.0.0.1:{}", port + 1))
+        .post(format!("http://127.0.0.1:{}", port))
         .header("Accept", "application/json, text/event-stream")
         .header("Content-Type", "application/json")
         .body(
@@ -650,7 +628,7 @@ fn mcp_resources_list_and_read_mem_uri() {
     assert!(initialize.status().is_success());
 
     let response = client
-        .post(format!("http://127.0.0.1:{}", port + 1))
+        .post(format!("http://127.0.0.1:{}", port))
         .header("Accept", "application/json, text/event-stream")
         .header("Content-Type", "application/json")
         .header("MCP-Protocol-Version", "2025-06-18")
@@ -674,7 +652,7 @@ fn mcp_resources_list_and_read_mem_uri() {
     );
 
     let response = client
-        .post(format!("http://127.0.0.1:{}", port + 1))
+        .post(format!("http://127.0.0.1:{}", port))
         .header("Accept", "application/json, text/event-stream")
         .header("Content-Type", "application/json")
         .header("MCP-Protocol-Version", "2025-06-18")
@@ -717,7 +695,7 @@ fn mcp_resource_templates_expose_mem_namespace_patterns() {
     let client = Client::builder().build().expect("build reqwest client");
 
     let initialize = client
-        .post(format!("http://127.0.0.1:{}", port + 1))
+        .post(format!("http://127.0.0.1:{}", port))
         .header("Accept", "application/json, text/event-stream")
         .header("Content-Type", "application/json")
         .body(
@@ -742,7 +720,7 @@ fn mcp_resource_templates_expose_mem_namespace_patterns() {
     assert!(initialize.status().is_success());
 
     let response = client
-        .post(format!("http://127.0.0.1:{}", port + 1))
+        .post(format!("http://127.0.0.1:{}", port))
         .header("Accept", "application/json, text/event-stream")
         .header("Content-Type", "application/json")
         .header("MCP-Protocol-Version", "2025-06-18")
@@ -802,7 +780,7 @@ fn mcp_tools_call_show_returns_structured_result() {
     let client = Client::builder().build().expect("build reqwest client");
 
     let initialize = client
-        .post(format!("http://127.0.0.1:{}", port + 1))
+        .post(format!("http://127.0.0.1:{}", port))
         .header("Accept", "application/json, text/event-stream")
         .header("Content-Type", "application/json")
         .body(
@@ -827,7 +805,7 @@ fn mcp_tools_call_show_returns_structured_result() {
     assert!(initialize.status().is_success());
 
     let response = client
-        .post(format!("http://127.0.0.1:{}", port + 1))
+        .post(format!("http://127.0.0.1:{}", port))
         .header("Accept", "application/json, text/event-stream")
         .header("Content-Type", "application/json")
         .header("MCP-Protocol-Version", "2025-06-18")
@@ -887,10 +865,8 @@ fn models_lists_supported_embedding_models() {
     assert!(stdout.contains(
         "bge-base-en-v1.5 dim=768 recommended use=balanced default for English notes and docs"
     ));
-    assert!(
-        stdout
-            .contains("bge-small-en-v1.5 dim=384 use=fast lightweight indexing on local machines")
-    );
+    assert!(stdout
+        .contains("bge-small-en-v1.5 dim=384 use=fast lightweight indexing on local machines"));
     assert!(stdout.contains("bge-large-en-v1.5 dim=1024 use=highest-quality English retrieval"));
     assert!(stdout.contains(
         "jina-embeddings-v2-base-code dim=768 use=code-heavy repositories and source search"
@@ -1063,14 +1039,13 @@ fn remember_file_preserves_text_extension_and_indexes_item() {
         .assert()
         .success();
 
-    assert!(
-        temp.path()
-            .join(".memento")
-            .join("agent")
-            .join("skills")
-            .join("sample-copy.txt")
-            .exists()
-    );
+    assert!(temp
+        .path()
+        .join(".memento")
+        .join("agent")
+        .join("skills")
+        .join("sample-copy.txt")
+        .exists());
 
     let output = base_command(&temp)
         .args(["show", "mem://agent/skills/sample-copy.txt"])
