@@ -13,13 +13,11 @@ function Main {
         $Version = (Invoke-RestMethod -Uri $TagUrl -UseBasicParsing).tag_name
     }
 
-    $VersionTrimmed = $Version.TrimStart("v")
-
     Write-Host "Installing Memento $Version to $InstallPath..." -ForegroundColor Cyan
 
     New-Item -ItemType Directory -Path $InstallPath -Force | Out-Null
 
-    $AssetName = "memento-$VersionTrimmed-x86_64-pc-windows-msvc.zip"
+    $AssetName = "memento-$Version-x86_64-pc-windows-msvc.zip"
     $DownloadUrl = "https://github.com/dagnele/memento/releases/download/$Version/$AssetName"
     $ZipPath = Join-Path $TempDir $AssetName
     $ExtractPath = Join-Path $TempDir "extracted"
@@ -31,7 +29,7 @@ function Main {
     Write-Host "Extracting..." -ForegroundColor Yellow
     Expand-Archive -Path $ZipPath -DestinationPath $ExtractPath -Force
 
-    $StagingDir = "memento-$VersionTrimmed-x86_64-pc-windows-msvc"
+    $StagingDir = "memento-$Version-x86_64-pc-windows-msvc"
     $ExePath = Join-Path $ExtractPath "$StagingDir\memento.exe"
     Copy-Item -Path $ExePath -Destination $InstallPath -Force
 
