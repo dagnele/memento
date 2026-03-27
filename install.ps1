@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "v0.1.2",
+    [string]$Version = "latest",
     [string]$InstallPath = "$env:LOCALAPPDATA\Memento"
 )
 
@@ -8,6 +8,11 @@ $ErrorActionPreference = "Stop"
 $TempDir = Join-Path $env:TEMP "memento-install-$(Get-Random)"
 
 function Main {
+    if ($Version -eq "latest") {
+        $TagUrl = "https://api.github.com/repos/dagnele/memento/releases/latest"
+        $Version = (Invoke-RestMethod -Uri $TagUrl -UseBasicParsing).tag_name
+    }
+
     Write-Host "Installing Memento $Version to $InstallPath..." -ForegroundColor Cyan
 
     New-Item -ItemType Directory -Path $InstallPath -Force | Out-Null

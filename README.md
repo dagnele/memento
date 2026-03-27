@@ -41,7 +41,7 @@ curl -LsSf https://github.com/dagnele/memento/releases/latest/download/memento-x
 ### Windows (PowerShell)
 
 ```powershell
-irm https://github.com/dagnele/memento/releases/latest/download/install.ps1 | iex
+irm https://raw.githubusercontent.com/dagnele/memento/main/install.ps1 | iex
 ```
 
 Or download a release from [GitHub Releases](https://github.com/dagnele/memento/releases/latest).
