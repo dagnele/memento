@@ -9,13 +9,11 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use tokio_util::sync::CancellationToken;
 
 use crate::bootstrap;
 use crate::config::WorkspaceConfig;
 use crate::dispatch;
 use crate::indexing::index_namespace_item;
-use crate::mcp;
 use crate::protocol::{ErrorResponse, ExecuteRequest, ExecuteResponse, RemoteCommand};
 use crate::repository::workspace::{AGENT_DIR, INDEX_FILE, USER_DIR, WorkspaceRepository};
 use crate::timing::{enable_timing, timing_enabled};
@@ -48,15 +46,9 @@ pub fn serve(debug: bool) -> Result<()> {
         .context("failed to build tokio runtime")?;
 
     runtime.block_on(async {
-        let shutdown = CancellationToken::new();
-        let mcp_shutdown = shutdown.child_token();
-
-        let mcp_fallback = mcp::mcp_service(mcp_shutdown);
-
         let app = Router::new()
             .route("/health", get(health_handler))
             .route("/v1/execute", post(execute_handler))
-            .fallback_service(mcp_fallback)
             .with_state(state);
 
         let listener = tokio::net::TcpListener::bind(&address)
@@ -69,16 +61,8 @@ pub fn serve(debug: bool) -> Result<()> {
             eprintln!("[memento:debug] server debug logging enabled");
         }
 
-        let server = axum::serve(listener, app).with_graceful_shutdown({
-            let shutdown = shutdown.clone();
-            async move {
-                tokio::select! {
-                    _ = shutdown.cancelled() => {}
-                    _ = tokio::signal::ctrl_c() => {
-                        shutdown.cancel();
-                    }
-                }
-            }
+        let server = axum::serve(listener, app).with_graceful_shutdown(async {
+            let _ = tokio::signal::ctrl_c().await;
         });
 
         if let Err(error) = server.await {
@@ -89,7 +73,7 @@ pub fn serve(debug: bool) -> Result<()> {
     })
 }
 
-fn ensure_namespace_items_indexed(config: &WorkspaceConfig) -> Result<()> {
+pub fn ensure_namespace_items_indexed(config: &WorkspaceConfig) -> Result<()> {
     bootstrap::ensure_default_agent_skill_file()?;
 
     let repository = WorkspaceRepository::open(INDEX_FILE)
@@ -120,8 +104,8 @@ fn ensure_namespace_items_indexed(config: &WorkspaceConfig) -> Result<()> {
                 continue;
             }
 
-            println!(
-                "memento serve auto-indexing {} item {} from {}",
+            eprintln!(
+                "memento auto-indexing {} item {} from {}",
                 namespace.as_str(),
                 uri,
                 source_path

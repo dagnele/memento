@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand, ValueEnum};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -25,6 +27,27 @@ pub enum CliCommand {
     Serve {
         #[arg(long, help = "Print per-command debug timing to stderr")]
         debug: bool,
+        #[arg(
+            long,
+            help = "Path to the project directory containing the .memento workspace"
+        )]
+        dir: Option<PathBuf>,
+    },
+    Mcp {
+        #[arg(
+            long,
+            value_enum,
+            default_value = "stdio",
+            help = "Transport to use for the MCP server"
+        )]
+        transport: McpTransport,
+        #[arg(long, help = "Port to bind when using HTTP transport")]
+        port: Option<u16>,
+        #[arg(
+            long,
+            help = "Path to the project directory containing the .memento workspace"
+        )]
+        dir: Option<PathBuf>,
     },
     Doctor,
     Models,
@@ -70,6 +93,7 @@ impl CliCommand {
         match self {
             CliCommand::Init { .. } => "init",
             CliCommand::Serve { .. } => "serve",
+            CliCommand::Mcp { .. } => "mcp",
             CliCommand::Doctor => "doctor",
             CliCommand::Models => "models",
             CliCommand::Add { .. } => "add",
@@ -83,6 +107,12 @@ impl CliCommand {
             CliCommand::Find { .. } => "find",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, ValueEnum, Serialize, Deserialize)]
+pub enum McpTransport {
+    Stdio,
+    Http,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, ValueEnum, Serialize, Deserialize, JsonSchema)]

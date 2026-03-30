@@ -79,6 +79,27 @@ fn start_server_with_args(
     child
 }
 
+fn start_mcp_server(temp: &tempfile::TempDir) -> (std::process::Child, u16) {
+    use std::process::Command as ProcessCommand;
+
+    let exe = assert_cmd::cargo::cargo_bin("memento");
+    let port = reserve_port();
+    let stdout_path = temp.path().join("mcp.stdout.log");
+    let stderr_path = temp.path().join("mcp.stderr.log");
+    let mut command = ProcessCommand::new(exe);
+    command
+        .current_dir(temp.path())
+        .env("MEMENTO_MODEL_CACHE_DIR", temp.path().join("model-cache"))
+        .env("MEMENTO_TEST_EMBEDDING", "1")
+        .args(["mcp", "--transport", "http", "--port", &port.to_string()])
+        .stdout(std::fs::File::create(&stdout_path).expect("create mcp stdout log"))
+        .stderr(std::fs::File::create(&stderr_path).expect("create mcp stderr log"));
+
+    let mut child = command.spawn().expect("start mcp server");
+    wait_for_server(&mut child, port, &stdout_path, &stderr_path);
+    (child, port)
+}
+
 fn stop_server(child: &mut std::process::Child) {
     let _ = child.kill();
     let _ = child.wait();
@@ -135,18 +156,6 @@ fn replace_config_line(temp: &tempfile::TempDir, prefix: &str, replacement: &str
         + "\n";
 
     fs::write(config_path, updated).expect("write updated config");
-}
-
-fn read_config_server_port(temp: &tempfile::TempDir) -> u16 {
-    let config_path = temp.path().join(".memento").join("config.toml");
-    let config = fs::read_to_string(config_path).expect("read config");
-
-    config
-        .lines()
-        .find_map(|line| line.strip_prefix("server_port = "))
-        .expect("server_port line")
-        .parse()
-        .expect("server_port is a valid u16")
 }
 
 fn wait_for_server(
@@ -287,16 +296,16 @@ fn serve_indexes_all_agent_skill_files() {
     assert!(stdout.contains("mem://agent/skills/debugging.md"));
     assert!(stdout.contains("mem://agent/skills/rust"));
 
-    let server_stdout =
-        fs::read_to_string(temp.path().join("server.stdout.log")).expect("read server stdout log");
-    assert!(server_stdout.contains(
-        "memento serve auto-indexing agent item mem://agent/skills/memento.md from .memento/agent/skills/memento.md"
+    let server_stderr =
+        fs::read_to_string(temp.path().join("server.stderr.log")).expect("read server stderr log");
+    assert!(server_stderr.contains(
+        "memento auto-indexing agent item mem://agent/skills/memento.md from .memento/agent/skills/memento.md"
     ));
-    assert!(server_stdout.contains(
-        "memento serve auto-indexing agent item mem://agent/skills/debugging.md from .memento/agent/skills/debugging.md"
+    assert!(server_stderr.contains(
+        "memento auto-indexing agent item mem://agent/skills/debugging.md from .memento/agent/skills/debugging.md"
     ));
-    assert!(server_stdout.contains(
-        "memento serve auto-indexing agent item mem://agent/skills/rust/refactor.md from .memento/agent/skills/rust/refactor.md"
+    assert!(server_stderr.contains(
+        "memento auto-indexing agent item mem://agent/skills/rust/refactor.md from .memento/agent/skills/rust/refactor.md"
     ));
 
     let output = base_command(&temp)
@@ -364,13 +373,13 @@ fn serve_auto_indexes_agent_and_user_namespace_files_with_extensions() {
     assert!(user_show_stdout.contains("mem://user/preferences/editor.json"));
     assert!(user_show_stdout.contains(".memento/user/preferences/editor.json"));
 
-    let server_stdout =
-        fs::read_to_string(temp.path().join("server.stdout.log")).expect("read server stdout log");
-    assert!(server_stdout.contains(
-        "memento serve auto-indexing agent item mem://agent/notes/release-plan.txt from .memento/agent/notes/release-plan.txt"
+    let server_stderr =
+        fs::read_to_string(temp.path().join("server.stderr.log")).expect("read server stderr log");
+    assert!(server_stderr.contains(
+        "memento auto-indexing agent item mem://agent/notes/release-plan.txt from .memento/agent/notes/release-plan.txt"
     ));
-    assert!(server_stdout.contains(
-        "memento serve auto-indexing user item mem://user/preferences/editor.json from .memento/user/preferences/editor.json"
+    assert!(server_stderr.contains(
+        "memento auto-indexing user item mem://user/preferences/editor.json from .memento/user/preferences/editor.json"
     ));
 
     stop_server(&mut server);
@@ -494,7 +503,7 @@ fn remote_commands_reject_invalid_server_port_config() {
 }
 
 #[test]
-fn serve_exposes_mcp_on_server_port() {
+fn mcp_http_is_reachable_on_its_port() {
     let temp = tempdir().expect("create temp dir");
 
     base_command(&temp)
@@ -503,12 +512,11 @@ fn serve_exposes_mcp_on_server_port() {
         .assert()
         .success();
 
-    let mut server = start_server(&temp, true);
-    let port = read_config_server_port(&temp);
+    let (mut mcp_server, mcp_port) = start_mcp_server(&temp);
 
-    assert!(TcpStream::connect(("127.0.0.1", port)).is_ok());
+    assert!(TcpStream::connect(("127.0.0.1", mcp_port)).is_ok());
 
-    stop_server(&mut server);
+    stop_server(&mut mcp_server);
 }
 
 #[test]
@@ -521,12 +529,11 @@ fn mcp_tool_list_is_available_on_server_port() {
         .assert()
         .success();
 
-    let mut server = start_server(&temp, true);
-    let port = read_config_server_port(&temp);
+    let (mut mcp_server, mcp_port) = start_mcp_server(&temp);
 
     let client = Client::builder().build().expect("build reqwest client");
     let response = client
-        .post(format!("http://127.0.0.1:{}", port))
+        .post(format!("http://127.0.0.1:{}", mcp_port))
         .header("Accept", "application/json, text/event-stream")
         .header("Content-Type", "application/json")
         .body(
@@ -557,7 +564,7 @@ fn mcp_tool_list_is_available_on_server_port() {
     assert!(body.contains("\"protocolVersion\":\"2025-06-18\""));
 
     let response = client
-        .post(format!("http://127.0.0.1:{}", port))
+        .post(format!("http://127.0.0.1:{}", mcp_port))
         .header("Accept", "application/json, text/event-stream")
         .header("Content-Type", "application/json")
         .header("MCP-Protocol-Version", "2025-06-18")
@@ -579,7 +586,7 @@ fn mcp_tool_list_is_available_on_server_port() {
     assert!(body.contains("\"name\":\"find\""));
     assert!(body.contains("\"name\":\"show\""));
 
-    stop_server(&mut server);
+    stop_server(&mut mcp_server);
 }
 
 #[test]
@@ -595,7 +602,6 @@ fn mcp_resources_list_and_read_mem_uri() {
         .success();
 
     let mut server = start_server(&temp, true);
-    let port = read_config_server_port(&temp);
 
     base_command(&temp)
         .env("MEMENTO_TEST_EMBEDDING", "1")
@@ -603,10 +609,14 @@ fn mcp_resources_list_and_read_mem_uri() {
         .assert()
         .success();
 
+    stop_server(&mut server);
+
+    let (mut mcp_server, mcp_port) = start_mcp_server(&temp);
+
     let client = Client::builder().build().expect("build reqwest client");
 
     let initialize = client
-        .post(format!("http://127.0.0.1:{}", port))
+        .post(format!("http://127.0.0.1:{}", mcp_port))
         .header("Accept", "application/json, text/event-stream")
         .header("Content-Type", "application/json")
         .body(
@@ -631,7 +641,7 @@ fn mcp_resources_list_and_read_mem_uri() {
     assert!(initialize.status().is_success());
 
     let response = client
-        .post(format!("http://127.0.0.1:{}", port))
+        .post(format!("http://127.0.0.1:{}", mcp_port))
         .header("Accept", "application/json, text/event-stream")
         .header("Content-Type", "application/json")
         .header("MCP-Protocol-Version", "2025-06-18")
@@ -655,7 +665,7 @@ fn mcp_resources_list_and_read_mem_uri() {
     );
 
     let response = client
-        .post(format!("http://127.0.0.1:{}", port))
+        .post(format!("http://127.0.0.1:{}", mcp_port))
         .header("Accept", "application/json, text/event-stream")
         .header("Content-Type", "application/json")
         .header("MCP-Protocol-Version", "2025-06-18")
@@ -680,7 +690,7 @@ fn mcp_resources_list_and_read_mem_uri() {
         "resources/read body was: {body}"
     );
 
-    stop_server(&mut server);
+    stop_server(&mut mcp_server);
 }
 
 #[test]
@@ -693,12 +703,11 @@ fn mcp_resource_templates_expose_mem_namespace_patterns() {
         .assert()
         .success();
 
-    let mut server = start_server(&temp, true);
-    let port = read_config_server_port(&temp);
+    let (mut mcp_server, mcp_port) = start_mcp_server(&temp);
     let client = Client::builder().build().expect("build reqwest client");
 
     let initialize = client
-        .post(format!("http://127.0.0.1:{}", port))
+        .post(format!("http://127.0.0.1:{}", mcp_port))
         .header("Accept", "application/json, text/event-stream")
         .header("Content-Type", "application/json")
         .body(
@@ -723,7 +732,7 @@ fn mcp_resource_templates_expose_mem_namespace_patterns() {
     assert!(initialize.status().is_success());
 
     let response = client
-        .post(format!("http://127.0.0.1:{}", port))
+        .post(format!("http://127.0.0.1:{}", mcp_port))
         .header("Accept", "application/json, text/event-stream")
         .header("Content-Type", "application/json")
         .header("MCP-Protocol-Version", "2025-06-18")
@@ -756,7 +765,7 @@ fn mcp_resource_templates_expose_mem_namespace_patterns() {
         "template body was: {body}"
     );
 
-    stop_server(&mut server);
+    stop_server(&mut mcp_server);
 }
 
 #[test]
@@ -772,7 +781,6 @@ fn mcp_tools_call_show_returns_structured_result() {
         .success();
 
     let mut server = start_server(&temp, true);
-    let port = read_config_server_port(&temp);
 
     base_command(&temp)
         .env("MEMENTO_TEST_EMBEDDING", "1")
@@ -780,10 +788,14 @@ fn mcp_tools_call_show_returns_structured_result() {
         .assert()
         .success();
 
+    stop_server(&mut server);
+
+    let (mut mcp_server, mcp_port) = start_mcp_server(&temp);
+
     let client = Client::builder().build().expect("build reqwest client");
 
     let initialize = client
-        .post(format!("http://127.0.0.1:{}", port))
+        .post(format!("http://127.0.0.1:{}", mcp_port))
         .header("Accept", "application/json, text/event-stream")
         .header("Content-Type", "application/json")
         .body(
@@ -808,7 +820,7 @@ fn mcp_tools_call_show_returns_structured_result() {
     assert!(initialize.status().is_success());
 
     let response = client
-        .post(format!("http://127.0.0.1:{}", port))
+        .post(format!("http://127.0.0.1:{}", mcp_port))
         .header("Accept", "application/json, text/event-stream")
         .header("Content-Type", "application/json")
         .header("MCP-Protocol-Version", "2025-06-18")
@@ -848,7 +860,7 @@ fn mcp_tools_call_show_returns_structured_result() {
         "tools/call body was: {body}"
     );
 
-    stop_server(&mut server);
+    stop_server(&mut mcp_server);
 }
 
 #[test]
@@ -2075,4 +2087,100 @@ fn remember_file_updates_existing_item_and_keeps_same_uri() {
     assert!(!stdout.contains("preview first imported version"));
 
     stop_server(&mut server);
+}
+
+#[test]
+fn serve_dir_flag_overrides_working_directory() {
+    use std::process::Command as ProcessCommand;
+
+    let workspace = tempdir().expect("create workspace dir");
+    let wrong_cwd = tempdir().expect("create wrong cwd dir");
+
+    // Init the workspace in the workspace temp dir.
+    base_command(&workspace)
+        .env("MEMENTO_TEST_EMBEDDING", "1")
+        .arg("init")
+        .assert()
+        .success();
+
+    let exe = assert_cmd::cargo::cargo_bin("memento");
+    let port = reserve_port();
+    write_server_port(&workspace, port);
+    let stdout_path = workspace.path().join("server.stdout.log");
+    let stderr_path = workspace.path().join("server.stderr.log");
+
+    // Start the server from a DIFFERENT cwd, using --dir to point at the workspace.
+    let mut server = ProcessCommand::new(exe)
+        .current_dir(wrong_cwd.path())
+        .env(
+            "MEMENTO_MODEL_CACHE_DIR",
+            workspace.path().join("model-cache"),
+        )
+        .env("MEMENTO_TEST_EMBEDDING", "1")
+        .args([
+            "serve",
+            "--dir",
+            workspace.path().to_str().expect("workspace path is utf-8"),
+        ])
+        .stdout(std::fs::File::create(&stdout_path).expect("create server stdout log"))
+        .stderr(std::fs::File::create(&stderr_path).expect("create server stderr log"))
+        .spawn()
+        .expect("start server");
+
+    wait_for_server(&mut server, port, &stdout_path, &stderr_path);
+
+    let resp = Client::new()
+        .get(format!("http://127.0.0.1:{port}/health"))
+        .send()
+        .expect("health request");
+    assert!(resp.status().is_success());
+
+    stop_server(&mut server);
+}
+
+#[test]
+fn mcp_dir_flag_overrides_working_directory() {
+    use std::process::Command as ProcessCommand;
+
+    let workspace = tempdir().expect("create workspace dir");
+    let wrong_cwd = tempdir().expect("create wrong cwd dir");
+
+    base_command(&workspace)
+        .env("MEMENTO_TEST_EMBEDDING", "1")
+        .arg("init")
+        .assert()
+        .success();
+
+    let exe = assert_cmd::cargo::cargo_bin("memento");
+    let port = reserve_port();
+    let stdout_path = workspace.path().join("mcp.stdout.log");
+    let stderr_path = workspace.path().join("mcp.stderr.log");
+
+    // Start the MCP server from a DIFFERENT cwd, using --dir to point at the workspace.
+    let mut mcp_server = ProcessCommand::new(exe)
+        .current_dir(wrong_cwd.path())
+        .env(
+            "MEMENTO_MODEL_CACHE_DIR",
+            workspace.path().join("model-cache"),
+        )
+        .env("MEMENTO_TEST_EMBEDDING", "1")
+        .args([
+            "mcp",
+            "--transport",
+            "http",
+            "--port",
+            &port.to_string(),
+            "--dir",
+            workspace.path().to_str().expect("workspace path is utf-8"),
+        ])
+        .stdout(std::fs::File::create(&stdout_path).expect("create mcp stdout log"))
+        .stderr(std::fs::File::create(&stderr_path).expect("create mcp stderr log"))
+        .spawn()
+        .expect("start mcp server");
+
+    wait_for_server(&mut mcp_server, port, &stdout_path, &stderr_path);
+
+    assert!(TcpStream::connect(("127.0.0.1", port)).is_ok());
+
+    stop_server(&mut mcp_server);
 }

@@ -103,7 +103,7 @@ impl TryFrom<CliCommand> for ExecuteRequest {
             CliCommand::Cat { uri } => RemoteCommand::Cat { uri },
             CliCommand::Show { uri } => RemoteCommand::Show { uri },
             CliCommand::Find { query } => RemoteCommand::Find { query },
-            CliCommand::Init { .. } | CliCommand::Serve { .. } => {
+            CliCommand::Init { .. } | CliCommand::Serve { .. } | CliCommand::Mcp { .. } => {
                 return Err("command is not executed through the server");
             }
         };

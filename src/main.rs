@@ -17,13 +17,22 @@ mod text_file;
 mod timing;
 mod uri;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
+use std::path::PathBuf;
 use std::time::Instant;
 
 use crate::cli::{Cli, CliCommand};
 use crate::protocol::ExecuteRequest;
 use crate::timing::log_timing;
+
+fn change_dir(dir: Option<PathBuf>) -> Result<()> {
+    if let Some(dir) = dir {
+        std::env::set_current_dir(&dir)
+            .with_context(|| format!("failed to change directory to `{}`", dir.display()))?;
+    }
+    Ok(())
+}
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -40,7 +49,21 @@ fn main() -> Result<()> {
             println!("{output}");
             Ok(())
         }
-        CliCommand::Serve { debug } => server::serve(debug),
+        CliCommand::Serve { debug, dir } => {
+            change_dir(dir)?;
+            server::serve(debug)
+        }
+        CliCommand::Mcp {
+            transport,
+            port,
+            dir,
+        } => {
+            change_dir(dir)?;
+            match transport {
+                cli::McpTransport::Stdio => mcp::serve_stdio(),
+                cli::McpTransport::Http => mcp::serve_http(port),
+            }
+        }
         command => {
             let total_start = Instant::now();
             let label = command.label();

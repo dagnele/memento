@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use anyhow::{Context, Result};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
@@ -7,7 +8,7 @@ use rmcp::model::{
     ListResourcesResult, RawResourceTemplate, ReadResourceRequestParams, ReadResourceResult,
     ResourceContents, ServerCapabilities, ServerInfo,
 };
-use rmcp::service::RequestContext;
+use rmcp::service::{RequestContext, ServiceExt};
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{RoleServer, ServerHandler, tool, tool_handler, tool_router};
@@ -17,10 +18,82 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 use crate::cli::MemoryNamespace;
+use crate::config::WorkspaceConfig;
 use crate::repository::workspace::{INDEX_FILE, WorkspaceRepository};
+use crate::server::ensure_namespace_items_indexed;
 use crate::service;
 
-pub fn mcp_service(
+pub fn serve_stdio() -> Result<()> {
+    let config = WorkspaceConfig::load()
+        .context("failed to load workspace config; run `memento init` first")?;
+    ensure_namespace_items_indexed(&config)?;
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("failed to build tokio runtime")?;
+
+    runtime.block_on(async {
+        let transport = rmcp::transport::io::stdio();
+        let server = MementoMcpServer::new();
+        let service = server
+            .serve(transport)
+            .await
+            .map_err(|error| anyhow::anyhow!("failed to start MCP stdio server: {error}"))?;
+        service
+            .waiting()
+            .await
+            .map_err(|error| anyhow::anyhow!("MCP stdio server error: {error}"))?;
+        Ok(())
+    })
+}
+
+pub fn serve_http(port: Option<u16>) -> Result<()> {
+    let config = WorkspaceConfig::load()
+        .context("failed to load workspace config; run `memento init` first")?;
+    let port = port.unwrap_or(config.server_port);
+    let address = format!("127.0.0.1:{port}");
+
+    ensure_namespace_items_indexed(&config)?;
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("failed to build tokio runtime")?;
+
+    runtime.block_on(async {
+        let shutdown = CancellationToken::new();
+        let service = mcp_http_service(shutdown.child_token());
+
+        let app = axum::Router::new().fallback_service(service);
+
+        let listener = tokio::net::TcpListener::bind(&address)
+            .await
+            .with_context(|| format!("failed to bind MCP server on {address}"))?;
+
+        eprintln!("memento mcp listening on http://{address}");
+
+        let server = axum::serve(listener, app).with_graceful_shutdown({
+            let shutdown = shutdown.clone();
+            async move {
+                tokio::select! {
+                    _ = shutdown.cancelled() => {}
+                    _ = tokio::signal::ctrl_c() => {
+                        shutdown.cancel();
+                    }
+                }
+            }
+        });
+
+        if let Err(error) = server.await {
+            eprintln!("MCP HTTP server exited with error: {error}");
+        }
+
+        Ok(())
+    })
+}
+
+fn mcp_http_service(
     shutdown: CancellationToken,
 ) -> StreamableHttpService<MementoMcpServer, LocalSessionManager> {
     let session_manager = Arc::new(LocalSessionManager::default());
