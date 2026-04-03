@@ -5,9 +5,15 @@ use anyhow::{Context, Result, anyhow, bail};
 use crate::config::WorkspaceConfig;
 use crate::protocol::{ErrorResponse, ExecuteRequest, ExecuteResponse};
 use crate::render;
+use crate::service::doctor::DoctorResult;
 use crate::timing::{log_timing, log_value};
 
-pub fn execute(request: &ExecuteRequest) -> Result<String> {
+pub struct ClientOutput {
+    pub stdout: String,
+    pub exit_ok: bool,
+}
+
+pub fn execute(request: &ExecuteRequest) -> Result<ClientOutput> {
     let total_start = Instant::now();
     let setup_start = Instant::now();
     let config = WorkspaceConfig::load()
@@ -53,20 +59,57 @@ pub fn execute(request: &ExecuteRequest) -> Result<String> {
 
     let render_start = Instant::now();
     let output = match payload {
-        ExecuteResponse::Add { result } => render::add::render(&result),
-        ExecuteResponse::Doctor { result } => render::doctor::render(&result),
-        ExecuteResponse::Forget { result } => render::forget::render(&result),
-        ExecuteResponse::Cat { result } => render::cat::render(&result),
-        ExecuteResponse::Find { result } => render::find::render(&result),
-        ExecuteResponse::Ls { result } => render::ls::render(&result),
-        ExecuteResponse::Models { result } => render::models::render(&result),
-        ExecuteResponse::Reindex { result } => render::reindex::render(&result),
-        ExecuteResponse::Remember { result } => render::remember::render(&result),
-        ExecuteResponse::Rm { result } => render::rm::render(&result),
-        ExecuteResponse::Show { result } => render::show::render(&result),
+        ExecuteResponse::Add { result } => ClientOutput {
+            stdout: render::add::render(&result),
+            exit_ok: true,
+        },
+        ExecuteResponse::Doctor { result } => render_doctor(result),
+        ExecuteResponse::Forget { result } => ClientOutput {
+            stdout: render::forget::render(&result),
+            exit_ok: true,
+        },
+        ExecuteResponse::Cat { result } => ClientOutput {
+            stdout: render::cat::render(&result),
+            exit_ok: true,
+        },
+        ExecuteResponse::Find { result } => ClientOutput {
+            stdout: render::find::render(&result),
+            exit_ok: true,
+        },
+        ExecuteResponse::Ls { result } => ClientOutput {
+            stdout: render::ls::render(&result),
+            exit_ok: true,
+        },
+        ExecuteResponse::Models { result } => ClientOutput {
+            stdout: render::models::render(&result),
+            exit_ok: true,
+        },
+        ExecuteResponse::Reindex { result } => ClientOutput {
+            stdout: render::reindex::render(&result),
+            exit_ok: true,
+        },
+        ExecuteResponse::Remember { result } => ClientOutput {
+            stdout: render::remember::render(&result),
+            exit_ok: true,
+        },
+        ExecuteResponse::Rm { result } => ClientOutput {
+            stdout: render::rm::render(&result),
+            exit_ok: true,
+        },
+        ExecuteResponse::Show { result } => ClientOutput {
+            stdout: render::show::render(result.as_ref()),
+            exit_ok: true,
+        },
     };
     log_timing("client_render_output", render_start.elapsed());
     log_timing("client_total_before_print", total_start.elapsed());
 
     Ok(output)
+}
+
+fn render_doctor(result: DoctorResult) -> ClientOutput {
+    ClientOutput {
+        stdout: render::doctor::render(&result),
+        exit_ok: result.healthy,
+    }
 }

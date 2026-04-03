@@ -16,6 +16,7 @@ use crate::dispatch;
 use crate::indexing::index_namespace_item;
 use crate::protocol::{ErrorResponse, ExecuteRequest, ExecuteResponse, RemoteCommand};
 use crate::repository::workspace::{AGENT_DIR, INDEX_FILE, USER_DIR, WorkspaceRepository};
+use crate::resource_state::{LiveResourceState, detect_live_state};
 use crate::timing::{enable_timing, timing_enabled};
 use crate::uri::Namespace;
 
@@ -96,6 +97,17 @@ pub fn ensure_namespace_items_indexed(config: &WorkspaceConfig) -> Result<()> {
 
             if let Some(existing_item) = repository.get_item_by_source_path(&source_path)? {
                 if existing_item.uri == uri {
+                    if detect_live_state(&existing_item)? == LiveResourceState::Ok {
+                        continue;
+                    }
+
+                    eprintln!(
+                        "memento auto-reindexing {} item {} from {}",
+                        namespace.as_str(),
+                        uri,
+                        source_path
+                    );
+                    index_namespace_item(&repository, config, namespace, &uri_path, &source_path)?;
                     continue;
                 }
 

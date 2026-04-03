@@ -17,7 +17,6 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
-use crate::cli::MemoryNamespace;
 use crate::config::WorkspaceConfig;
 use crate::repository::workspace::{INDEX_FILE, WorkspaceRepository};
 use crate::server::ensure_namespace_items_indexed;
@@ -136,8 +135,7 @@ struct RmArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct RememberArgs {
-    namespace: MemoryNamespace,
-    path: String,
+    uri: String,
     file: Option<String>,
     text: Option<String>,
 }
@@ -205,7 +203,7 @@ impl MementoMcpServer {
         &self,
         Parameters(args): Parameters<RememberArgs>,
     ) -> Result<CallToolResult, ErrorData> {
-        let result = service::remember::execute(args.namespace, args.path, args.file, args.text)
+        let result = service::remember::execute(args.uri, args.file, args.text)
             .map_err(internal_tool_error)?;
         json_result(result)
     }

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::cli::{CliCommand, EmbeddingModelArg, MemoryNamespace};
+use crate::cli::{CliCommand, EmbeddingModelArg};
 use crate::service::add::AddResult;
 use crate::service::cat::CatResult;
 use crate::service::doctor::DoctorResult;
@@ -31,8 +31,7 @@ pub enum RemoteCommand {
         target: String,
     },
     Remember {
-        namespace: MemoryNamespace,
-        path: String,
+        uri: String,
         file: Option<String>,
         text: Option<String>,
     },
@@ -69,7 +68,7 @@ pub enum ExecuteResponse {
     Reindex { result: ReindexResult },
     Remember { result: RememberResult },
     Rm { result: RmResult },
-    Show { result: ShowResult },
+    Show { result: Box<ShowResult> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,17 +85,7 @@ impl TryFrom<CliCommand> for ExecuteRequest {
             CliCommand::Models => RemoteCommand::Models,
             CliCommand::Add { force, paths } => RemoteCommand::Add { force, paths },
             CliCommand::Rm { target } => RemoteCommand::Rm { target },
-            CliCommand::Remember {
-                namespace,
-                path,
-                file,
-                text,
-            } => RemoteCommand::Remember {
-                namespace,
-                path,
-                file,
-                text,
-            },
+            CliCommand::Remember { uri, file, text } => RemoteCommand::Remember { uri, file, text },
             CliCommand::Reindex { paths } => RemoteCommand::Reindex { paths },
             CliCommand::Forget { uri } => RemoteCommand::Forget { uri },
             CliCommand::Ls { uri } => RemoteCommand::Ls { uri },

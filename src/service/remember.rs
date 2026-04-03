@@ -4,13 +4,12 @@ use std::path::{Component, Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::cli::MemoryNamespace;
 use crate::config::WorkspaceConfig;
 use crate::indexing::index_namespace_item;
 use crate::repository::workspace::{AGENT_DIR, INDEX_FILE, USER_DIR, WorkspaceRepository};
 use crate::service::shared::validate_workspace_embedding;
 use crate::text_file::read_text_file;
-use crate::uri::Namespace;
+use crate::uri::{Namespace, ParsedUri, parse_memento_uri};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RememberResult {
@@ -18,12 +17,7 @@ pub struct RememberResult {
     pub path: String,
 }
 
-pub fn execute(
-    namespace: MemoryNamespace,
-    path: String,
-    file: Option<String>,
-    text: Option<String>,
-) -> Result<RememberResult> {
+pub fn execute(uri: String, file: Option<String>, text: Option<String>) -> Result<RememberResult> {
     let repository = WorkspaceRepository::open(INDEX_FILE)
         .context("failed to open workspace database; run `memento init` first")?;
     repository
@@ -34,12 +28,9 @@ pub fn execute(
         .context("failed to load workspace config; run `memento init` first")?;
     repository.ensure_vector_schema_matches(config.embedding_dimension)?;
 
-    let namespace = match namespace {
-        MemoryNamespace::User => Namespace::User,
-        MemoryNamespace::Agent => Namespace::Agent,
-    };
-    let relative_path = normalize_namespace_path(&path)?;
+    let (namespace, relative_path) = parse_memory_item_uri(&uri)?;
     let remember_input = remember_input(file.as_deref(), text.as_deref())?;
+    validate_destination_path(&relative_path, &remember_input)?;
     let workspace_path = workspace_file_path(namespace, &relative_path, &remember_input)?;
     let contents = remember_contents(&remember_input)?;
 
@@ -53,7 +44,7 @@ pub fn execute(
 
     let indexed_source_path = normalize_source_path(&workspace_path)?;
     let uri_path = namespace_uri_path(namespace, &workspace_path)?;
-    let uri = index_namespace_item(
+    let stored_uri = index_namespace_item(
         &repository,
         &config,
         namespace,
@@ -62,9 +53,29 @@ pub fn execute(
     )?;
 
     Ok(RememberResult {
-        uri,
+        uri: stored_uri,
         path: indexed_source_path,
     })
+}
+
+fn parse_memory_item_uri(uri: &str) -> Result<(Namespace, String)> {
+    match parse_memento_uri(uri)? {
+        ParsedUri::Item {
+            namespace: Namespace::User,
+            relative_path,
+        } => Ok((Namespace::User, normalize_namespace_path(&relative_path)?)),
+        ParsedUri::Item {
+            namespace: Namespace::Agent,
+            relative_path,
+        } => Ok((Namespace::Agent, normalize_namespace_path(&relative_path)?)),
+        ParsedUri::Item {
+            namespace: Namespace::Resources,
+            ..
+        } => bail!("`remember` only supports `mem://user/...` and `mem://agent/...`"),
+        ParsedUri::Root | ParsedUri::Namespace(_) => {
+            bail!("`remember` requires a concrete user or agent item URI")
+        }
+    }
 }
 
 enum RememberInput<'a> {
@@ -86,6 +97,16 @@ fn remember_contents(input: &RememberInput<'_>) -> Result<String> {
         RememberInput::File(path) => read_source_file(path),
         RememberInput::Text(text) => Ok((*text).to_string()),
     }
+}
+
+fn validate_destination_path(relative_path: &str, input: &RememberInput<'_>) -> Result<()> {
+    if matches!(input, RememberInput::Text(_)) && !relative_path.ends_with(".md") {
+        bail!(
+            "inline text requires a Markdown destination URI ending in `.md`; use a URI like `mem://user/notes/todo.md`"
+        );
+    }
+
+    Ok(())
 }
 
 fn read_source_file(path: &str) -> Result<String> {
@@ -165,7 +186,7 @@ fn workspace_file_path(
                     _ => format!("{relative_path}.md"),
                 }
             }
-            RememberInput::Text(_) => format!("{relative_path}.md"),
+            RememberInput::Text(_) => unreachable!("inline text paths must end in .md"),
         }
     };
 

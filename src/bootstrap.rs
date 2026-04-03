@@ -11,7 +11,7 @@ use crate::repository::workspace::{
     AGENT_DIR, INDEX_FILE, USER_DIR, WORKSPACE_DIR, WorkspaceRepository,
 };
 
-const DEFAULT_AGENT_SKILL_PATH: &str = ".memento/agent/skills/memento.md";
+const DEFAULT_AGENT_SKILL_PATH: &str = ".memento/agent/skills/memento/SKILL.md";
 const DEFAULT_AGENT_SKILL_CONTENT: &str = r#"# Memento
 
 Use `memento` to store and search local project knowledge.
@@ -22,7 +22,7 @@ Use `memento` to store and search local project knowledge.
 - Use `memento add <path>...` to index project files under `mem://resources/...`
 - Use `memento ls`, `memento show <uri>`, and `memento cat <uri>` to browse stored content
 - Use `memento find <query>` to search indexed content semantically
-- Use `memento remember --namespace user|agent --path <path> <text>` to save durable notes
+- Use `memento remember <uri> <text>` to save durable notes; inline text URIs must end in `.md`
 - Use `memento forget <uri>` to remove a saved memory entry
 
 ## Using the MCP server
@@ -56,8 +56,8 @@ Use `memento` to store and search local project knowledge.
 
 ## Memory commands
 
-- `memento remember --namespace user --path <path> <text>` stores user memory under `mem://user/...`
-- `memento remember --namespace agent --path <path> <text>` stores agent memory under `mem://agent/...`
+- `memento remember mem://user/<path>.md <text>` stores user memory under `mem://user/...`
+- `memento remember mem://agent/<path>.md <text>` stores agent memory under `mem://agent/...`
 - `memento forget <uri>` removes a stored memory entry
 
 ## Notes
@@ -126,6 +126,10 @@ pub fn ensure_default_agent_skill_file() -> Result<()> {
 
 fn write_default_agent_skill() -> Result<()> {
     let skill_path = Path::new(DEFAULT_AGENT_SKILL_PATH);
+
+    if skill_path.exists() {
+        return Ok(());
+    }
 
     if let Some(parent) = skill_path.parent() {
         fs::create_dir_all(parent)

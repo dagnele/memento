@@ -21,7 +21,7 @@ memento doctor
 memento models
 memento add [--force] <path>...
 memento rm <path|uri>
-memento remember --namespace <user|agent> --path <path> (<text> | --file <source>)
+memento remember <uri> (<text> | --file <source>)
 memento forget <uri>
 memento reindex [path]...
 memento ls [uri]
@@ -81,15 +81,15 @@ cargo run -- find "workspace config loading"
 Store a user memory item:
 
 ```bash
-cargo run -- remember --namespace user --path preferences/writing-style "Prefer concise technical explanations"
+cargo run -- remember mem://user/preferences/writing-style.md "Prefer concise technical explanations"
 ```
 
 Inspect what is stored:
 
 ```bash
 cargo run -- ls
-cargo run -- show mem://user/preferences/writing-style
-cargo run -- cat mem://user/preferences/writing-style
+cargo run -- show mem://user/preferences/writing-style.md
+cargo run -- cat mem://user/preferences/writing-style.md
 ```
 
 ## Workspace layout

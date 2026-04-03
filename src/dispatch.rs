@@ -32,16 +32,11 @@ pub fn execute_remote_structured(command: RemoteCommand) -> Result<ExecuteRespon
         RemoteCommand::Rm { target } => Ok(ExecuteResponse::Rm {
             result: service::rm::execute(target)?,
         }),
-        RemoteCommand::Remember {
-            namespace,
-            path,
-            file,
-            text,
-        } => Ok(ExecuteResponse::Remember {
-            result: service::remember::execute(namespace, path, file, text)?,
+        RemoteCommand::Remember { uri, file, text } => Ok(ExecuteResponse::Remember {
+            result: service::remember::execute(uri, file, text)?,
         }),
         RemoteCommand::Show { uri } => Ok(ExecuteResponse::Show {
-            result: service::show::execute(uri)?,
+            result: Box::new(service::show::execute(uri)?),
         }),
     }
 }
