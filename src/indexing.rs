@@ -237,6 +237,12 @@ fn index_resource_file(
     namespace: &str,
     kind: &str,
 ) -> Result<IndexFileOutcome> {
+    let item_descriptor = IndexedItemDescriptor {
+        source_path,
+        uri,
+        namespace,
+        kind,
+    };
     let metadata = fs::metadata(file_path)
         .with_context(|| format!("failed to read metadata for `{}`", file_path.display()))?;
     let content = match try_read_text_file(file_path)? {
@@ -252,10 +258,7 @@ fn index_resource_file(
         IndexedResourceContent::Text(content) => {
             index_item_with_content(
                 repository,
-                source_path,
-                uri,
-                namespace,
-                kind,
+                &item_descriptor,
                 &metadata,
                 NewContentLayer {
                     item_id: 0,
@@ -277,10 +280,7 @@ fn index_resource_file(
             let body_for_layer = body.clone();
             index_item_with_content(
                 repository,
-                source_path,
-                uri,
-                namespace,
-                kind,
+                &item_descriptor,
                 &metadata,
                 NewContentLayer {
                     item_id: 0,
@@ -309,15 +309,18 @@ fn index_text_item_file(
     namespace: &str,
     kind: &str,
 ) -> Result<()> {
+    let item_descriptor = IndexedItemDescriptor {
+        source_path,
+        uri,
+        namespace,
+        kind,
+    };
     let metadata = fs::metadata(file_path)
         .with_context(|| format!("failed to read metadata for `{}`", file_path.display()))?;
     let content = read_text_file(file_path)?;
     index_item_with_content(
         repository,
-        source_path,
-        uri,
-        namespace,
-        kind,
+        &item_descriptor,
         &metadata,
         NewContentLayer {
             item_id: 0,
@@ -336,26 +339,28 @@ fn index_text_item_file(
 
 fn index_item_with_content(
     repository: &WorkspaceRepository,
-    source_path: &str,
-    uri: &str,
-    namespace: &str,
-    kind: &str,
+    item_descriptor: &IndexedItemDescriptor<'_>,
     metadata: &fs::Metadata,
     content_layer: NewContentLayer<'_>,
     segments: Vec<TextSegment>,
 ) -> Result<()> {
     repository.upsert_item(&NewItem {
-        uri,
-        namespace,
-        kind,
-        source_path: Some(source_path),
+        uri: item_descriptor.uri,
+        namespace: item_descriptor.namespace,
+        kind: item_descriptor.kind,
+        source_path: Some(item_descriptor.source_path),
         file_size_bytes: i64::try_from(metadata.len()).ok(),
         modified_at: system_time_to_unix_timestamp(metadata.modified().ok()).as_deref(),
     })?;
 
     let item = repository
-        .get_item_by_source_path(source_path)?
-        .ok_or_else(|| anyhow!("item missing after upsert: `{source_path}`"))?;
+        .get_item_by_source_path(item_descriptor.source_path)?
+        .ok_or_else(|| {
+            anyhow!(
+                "item missing after upsert: `{}`",
+                item_descriptor.source_path
+            )
+        })?;
 
     repository.replace_content_layer(&NewContentLayer {
         item_id: item.id,
@@ -381,7 +386,8 @@ fn index_item_with_content(
         bail!(
             "segment count mismatch for `{source_path}`: expected {}, got {}",
             segments.len(),
-            stored_spans.len()
+            stored_spans.len(),
+            source_path = item_descriptor.source_path
         );
     }
 
@@ -396,6 +402,13 @@ fn index_item_with_content(
 enum IndexedResourceContent {
     Text(String),
     Metadata(String),
+}
+
+struct IndexedItemDescriptor<'a> {
+    source_path: &'a str,
+    uri: &'a str,
+    namespace: &'a str,
+    kind: &'a str,
 }
 
 fn build_resource_metadata_body(
