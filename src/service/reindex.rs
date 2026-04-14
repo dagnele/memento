@@ -12,6 +12,7 @@ use crate::uri::Namespace;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReindexResult {
     pub indexed_paths: Vec<String>,
+    pub metadata_only_paths: Vec<String>,
     pub deleted_paths: Vec<String>,
 }
 
@@ -40,11 +41,13 @@ pub fn execute(paths: Vec<String>) -> Result<ReindexResult> {
     };
 
     let mut indexed_paths = Vec::new();
+    let mut metadata_only_paths = Vec::new();
     let mut deleted_paths = Vec::new();
 
     for path in resource_paths {
         match reindex_path(&repository, &config, &path)? {
             ReindexPathOutcome::Indexed => indexed_paths.push(path),
+            ReindexPathOutcome::MetadataOnly => metadata_only_paths.push(path),
             ReindexPathOutcome::Deleted => deleted_paths.push(path),
             ReindexPathOutcome::Skipped => {}
         }
@@ -52,12 +55,14 @@ pub fn execute(paths: Vec<String>) -> Result<ReindexResult> {
 
     Ok(ReindexResult {
         indexed_paths,
+        metadata_only_paths,
         deleted_paths,
     })
 }
 
 enum ReindexPathOutcome {
     Indexed,
+    MetadataOnly,
     Deleted,
     Skipped,
 }
@@ -101,6 +106,8 @@ fn reindex_resource_file(
 
     if !report.indexed_paths.is_empty() {
         Ok(ReindexPathOutcome::Indexed)
+    } else if !report.metadata_only_paths.is_empty() {
+        Ok(ReindexPathOutcome::MetadataOnly)
     } else if !report.deleted_paths.is_empty() {
         Ok(ReindexPathOutcome::Deleted)
     } else {

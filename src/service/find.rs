@@ -66,6 +66,15 @@ pub fn execute(query: String) -> Result<FindResult> {
         .into_iter()
         .filter(|result| result.distance <= MAX_MATCH_DISTANCE)
         .map(|result| {
+            let preview = read_preview(
+                &repository,
+                result.source_path.as_deref(),
+                result.layer.as_str(),
+                result.start_line,
+                result.end_line,
+                result.uri.as_str(),
+            )?;
+
             Ok(FindMatch {
                 uri: result.uri,
                 distance: result.distance,
@@ -74,11 +83,7 @@ pub fn execute(query: String) -> Result<FindResult> {
                 locator: format_locator(result.start_line, result.end_line),
                 kind: result.kind,
                 namespace: result.namespace,
-                preview: read_preview(
-                    result.source_path.as_deref(),
-                    result.start_line,
-                    result.end_line,
-                )?,
+                preview,
                 live_state: detect_live_state_from_source(
                     result.source_path.as_deref(),
                     result.file_size_bytes,
@@ -127,10 +132,17 @@ fn format_locator(start_line: Option<i64>, end_line: Option<i64>) -> String {
 }
 
 fn read_preview(
+    repository: &WorkspaceRepository,
     path: Option<&str>,
+    layer: &str,
     start_line: Option<i64>,
     end_line: Option<i64>,
+    uri: &str,
 ) -> Result<Option<String>> {
+    if let Some(preview) = read_stored_preview(repository, uri, layer, start_line, end_line)? {
+        return Ok(Some(preview));
+    }
+
     let Some(path) = path else {
         return Ok(None);
     };
@@ -151,6 +163,57 @@ fn read_preview(
         return Ok(None);
     }
 
+    let start_index = start.saturating_sub(1).min(lines.len());
+    let end_index = end.min(lines.len());
+
+    if start_index >= end_index {
+        return Ok(None);
+    }
+
+    let preview = lines[start_index..end_index]
+        .iter()
+        .take(4)
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" | ");
+
+    if preview.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(preview))
+}
+
+fn read_stored_preview(
+    repository: &WorkspaceRepository,
+    uri: &str,
+    layer: &str,
+    start_line: Option<i64>,
+    end_line: Option<i64>,
+) -> Result<Option<String>> {
+    let Some(item) = repository.get_item_by_uri(uri)? else {
+        return Ok(None);
+    };
+
+    let Some(content_layer) = repository.get_content_layer(item.id, layer)? else {
+        return Ok(None);
+    };
+
+    let Some(body) = content_layer.body else {
+        return Ok(None);
+    };
+
+    let lines = body.lines().collect::<Vec<_>>();
+
+    if lines.is_empty() {
+        return Ok(None);
+    }
+
+    let start = start_line.unwrap_or(1).max(1) as usize;
+    let end = end_line
+        .unwrap_or(start_line.unwrap_or(1))
+        .max(start as i64) as usize;
     let start_index = start.saturating_sub(1).min(lines.len());
     let end_index = end.min(lines.len());
 

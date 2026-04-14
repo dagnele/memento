@@ -10,12 +10,17 @@ use crate::config::WorkspaceConfig;
 use crate::embedding::embed_text;
 use crate::repository::workspace::WORKSPACE_DIR;
 use crate::repository::workspace::{NewContentLayer, NewItem, NewVectorSpan, WorkspaceRepository};
-use crate::text_file::read_text_file;
+use crate::text_file::{read_text_file, try_read_text_file};
 use crate::uri::{self, Namespace};
+
+const DETAIL_LAYER: &str = "detail";
+const STORAGE_KIND_DISK: &str = "disk";
+const STORAGE_KIND_METADATA: &str = "metadata";
 
 #[derive(Debug, Clone)]
 pub struct IndexingReport {
     pub indexed_paths: Vec<String>,
+    pub metadata_only_paths: Vec<String>,
     pub skipped_paths: Vec<String>,
     pub deleted_paths: Vec<String>,
 }
@@ -32,6 +37,7 @@ pub fn index_paths(
 
     let mut report = IndexingReport {
         indexed_paths: Vec::new(),
+        metadata_only_paths: Vec::new(),
         skipped_paths: Vec::new(),
         deleted_paths: Vec::new(),
     };
@@ -63,8 +69,10 @@ pub fn index_paths(
                 continue;
             }
 
-            index_file(repository, config, &file_path, &normalized_path)?;
-            report.indexed_paths.push(normalized_path);
+            match index_file(repository, config, &file_path, &normalized_path)? {
+                IndexFileOutcome::Indexed => report.indexed_paths.push(normalized_path),
+                IndexFileOutcome::MetadataOnly => report.metadata_only_paths.push(normalized_path),
+            }
         }
     }
 
@@ -138,6 +146,7 @@ pub fn reindex_resource_paths(
 ) -> Result<IndexingReport> {
     let mut report = IndexingReport {
         indexed_paths: Vec::new(),
+        metadata_only_paths: Vec::new(),
         skipped_paths: Vec::new(),
         deleted_paths: Vec::new(),
     };
@@ -158,8 +167,12 @@ pub fn reindex_resource_paths(
         let resolved_path = absolute_path
             .canonicalize()
             .with_context(|| format!("failed to resolve path `{}`", absolute_path.display()))?;
-        index_file(repository, config, &resolved_path, resource_path)?;
-        report.indexed_paths.push(resource_path.clone());
+        match index_file(repository, config, &resolved_path, resource_path)? {
+            IndexFileOutcome::Indexed => report.indexed_paths.push(resource_path.clone()),
+            IndexFileOutcome::MetadataOnly => {
+                report.metadata_only_paths.push(resource_path.clone())
+            }
+        }
     }
 
     Ok(report)
@@ -170,8 +183,8 @@ fn index_file(
     config: &WorkspaceConfig,
     file_path: &Path,
     normalized_path: &str,
-) -> Result<()> {
-    index_item_file(
+) -> Result<IndexFileOutcome> {
+    index_resource_file(
         repository,
         config,
         file_path,
@@ -180,6 +193,11 @@ fn index_file(
         "resources",
         "resource_file",
     )
+}
+
+enum IndexFileOutcome {
+    Indexed,
+    MetadataOnly,
 }
 
 pub fn index_namespace_item(
@@ -197,7 +215,7 @@ pub fn index_namespace_item(
     };
     let uri = uri::build_namespace_item_uri(namespace, uri_path);
 
-    index_item_file(
+    index_text_item_file(
         repository,
         config,
         file_path,
@@ -210,7 +228,79 @@ pub fn index_namespace_item(
     Ok(uri)
 }
 
-fn index_item_file(
+fn index_resource_file(
+    repository: &WorkspaceRepository,
+    config: &WorkspaceConfig,
+    file_path: &Path,
+    source_path: &str,
+    uri: &str,
+    namespace: &str,
+    kind: &str,
+) -> Result<IndexFileOutcome> {
+    let metadata = fs::metadata(file_path)
+        .with_context(|| format!("failed to read metadata for `{}`", file_path.display()))?;
+    let content = match try_read_text_file(file_path)? {
+        Some(content) => IndexedResourceContent::Text(content),
+        None => IndexedResourceContent::Metadata(build_resource_metadata_body(
+            file_path,
+            source_path,
+            &metadata,
+        )),
+    };
+
+    match content {
+        IndexedResourceContent::Text(content) => {
+            index_item_with_content(
+                repository,
+                source_path,
+                uri,
+                namespace,
+                kind,
+                &metadata,
+                NewContentLayer {
+                    item_id: 0,
+                    layer: DETAIL_LAYER,
+                    storage_kind: STORAGE_KIND_DISK,
+                    body: None,
+                    checksum: None,
+                },
+                build_segments(
+                    &content,
+                    config.segment_line_count,
+                    config.segment_line_overlap,
+                ),
+            )?;
+            Ok(IndexFileOutcome::Indexed)
+        }
+        IndexedResourceContent::Metadata(body) => {
+            let body_lines = body.lines().count().max(1);
+            let body_for_layer = body.clone();
+            index_item_with_content(
+                repository,
+                source_path,
+                uri,
+                namespace,
+                kind,
+                &metadata,
+                NewContentLayer {
+                    item_id: 0,
+                    layer: DETAIL_LAYER,
+                    storage_kind: STORAGE_KIND_METADATA,
+                    body: Some(body_for_layer.as_str()),
+                    checksum: None,
+                },
+                vec![TextSegment {
+                    start_line: 1,
+                    end_line: i64::try_from(body_lines).unwrap_or(i64::MAX),
+                    text: body,
+                }],
+            )?;
+            Ok(IndexFileOutcome::MetadataOnly)
+        }
+    }
+}
+
+fn index_text_item_file(
     repository: &WorkspaceRepository,
     config: &WorkspaceConfig,
     file_path: &Path,
@@ -221,7 +311,39 @@ fn index_item_file(
 ) -> Result<()> {
     let metadata = fs::metadata(file_path)
         .with_context(|| format!("failed to read metadata for `{}`", file_path.display()))?;
+    let content = read_text_file(file_path)?;
+    index_item_with_content(
+        repository,
+        source_path,
+        uri,
+        namespace,
+        kind,
+        &metadata,
+        NewContentLayer {
+            item_id: 0,
+            layer: DETAIL_LAYER,
+            storage_kind: STORAGE_KIND_DISK,
+            body: None,
+            checksum: None,
+        },
+        build_segments(
+            &content,
+            config.segment_line_count,
+            config.segment_line_overlap,
+        ),
+    )
+}
 
+fn index_item_with_content(
+    repository: &WorkspaceRepository,
+    source_path: &str,
+    uri: &str,
+    namespace: &str,
+    kind: &str,
+    metadata: &fs::Metadata,
+    content_layer: NewContentLayer<'_>,
+    segments: Vec<TextSegment>,
+) -> Result<()> {
     repository.upsert_item(&NewItem {
         uri,
         namespace,
@@ -237,23 +359,14 @@ fn index_item_file(
 
     repository.replace_content_layer(&NewContentLayer {
         item_id: item.id,
-        layer: "detail",
-        storage_kind: "disk",
-        body: None,
-        checksum: None,
+        ..content_layer
     })?;
 
-    let content = read_text_file(file_path)?;
-    let segments = build_segments(
-        &content,
-        config.segment_line_count,
-        config.segment_line_overlap,
-    );
     let spans = segments
         .iter()
         .map(|segment| NewVectorSpan {
             item_id: item.id,
-            layer: "detail",
+            layer: DETAIL_LAYER,
             scope: "segment",
             start_line: Some(segment.start_line),
             end_line: Some(segment.end_line),
@@ -274,11 +387,66 @@ fn index_item_file(
 
     for (segment, span) in segments.iter().zip(stored_spans.iter()) {
         let embedding = embed_text(&segment.text)?;
-
         repository.replace_vector_embedding(span.id, embedding.as_bytes())?;
     }
 
     Ok(())
+}
+
+enum IndexedResourceContent {
+    Text(String),
+    Metadata(String),
+}
+
+fn build_resource_metadata_body(
+    file_path: &Path,
+    source_path: &str,
+    metadata: &fs::Metadata,
+) -> String {
+    let file_name = file_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(source_path);
+    let extension = file_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .unwrap_or_else(|| "none".to_string());
+    let file_type = friendly_file_type_label(&extension);
+    let modified = system_time_to_unix_timestamp(metadata.modified().ok())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    [
+        format!("File name: {file_name}"),
+        format!("File type: {file_type}"),
+        format!("Extension: {extension}"),
+        format!("Path: {source_path}"),
+        format!("Modified date: {modified}"),
+        format!("Size: {} bytes", metadata.len()),
+        "Indexing mode: metadata only".to_string(),
+    ]
+    .join("\n")
+}
+
+fn friendly_file_type_label(extension: &str) -> &'static str {
+    match extension {
+        "pdf" => "PDF document",
+        "png" => "PNG image",
+        "jpg" | "jpeg" => "JPEG image",
+        "gif" => "GIF image",
+        "webp" => "WebP image",
+        "svg" => "SVG image",
+        "doc" => "Word document",
+        "docx" => "Word document",
+        "xls" => "Excel spreadsheet",
+        "xlsx" => "Excel spreadsheet",
+        "ppt" => "PowerPoint presentation",
+        "pptx" => "PowerPoint presentation",
+        "zip" => "ZIP archive",
+        "bin" => "Binary file",
+        "none" => "File without extension",
+        _ => "Non-text file",
+    }
 }
 
 fn resolve_input_path(path: &str) -> Result<PathBuf> {

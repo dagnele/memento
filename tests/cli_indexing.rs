@@ -7,7 +7,7 @@ use tempfile::tempdir;
 use support::*;
 
 #[test]
-fn add_rejects_binary_input() {
+fn add_indexes_binary_input_as_metadata_only() {
     let temp = tempdir().expect("create temp dir");
     let source = fixture_path("binary/sample.bin");
     let copied = temp.path().join("sample.bin");
@@ -19,15 +19,146 @@ fn add_rejects_binary_input() {
     let mut server = start_server(&temp, true);
 
     let output = base_command(&temp)
+        .env("MEMENTO_TEST_EMBEDDING", "1")
         .args(["add", "sample.bin"])
         .assert()
-        .failure()
+        .success()
         .get_output()
-        .stderr
+        .stdout
         .clone();
 
-    let stderr = strip_ansi(&String::from_utf8(output).expect("stderr is utf-8"));
-    assert!(stderr.contains("only text-based UTF-8 files are supported"));
+    let stdout = strip_ansi(&String::from_utf8(output).expect("stdout is utf-8"));
+    assert!(stdout.contains("indexed 1 resource(s)"));
+    assert!(stdout.contains("added sample.bin metadata only"));
+
+    let show_output = base_command(&temp)
+        .args(["show", "mem://resources/sample.bin"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let show_stdout = strip_ansi(&String::from_utf8(show_output).expect("stdout is utf-8"));
+    assert!(show_stdout.contains("mem://resources/sample.bin"));
+    assert!(show_stdout.contains("layers"));
+    assert!(show_stdout.contains("detail:metadata"));
+
+    let find_output = base_command(&temp)
+        .env("MEMENTO_TEST_EMBEDDING", "1")
+        .args(["find", "binary file sample.bin"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let find_stdout = strip_ansi(&String::from_utf8(find_output).expect("stdout is utf-8"));
+    assert!(find_stdout.contains("mem://resources/sample.bin"));
+    assert!(find_stdout.contains("preview File name: sample.bin | File type: Binary file"));
+
+    stop_server(&mut server);
+}
+
+#[test]
+fn reindex_keeps_binary_resource_as_metadata_only() {
+    let temp = tempdir().expect("create temp dir");
+    let source = fixture_path("binary/sample.bin");
+    let copied = temp.path().join("sample.bin");
+
+    fs::copy(&source, &copied).expect("copy fixture");
+
+    base_command(&temp)
+        .env("MEMENTO_TEST_EMBEDDING", "1")
+        .arg("init")
+        .assert()
+        .success();
+
+    let mut server = start_server(&temp, true);
+
+    base_command(&temp)
+        .env("MEMENTO_TEST_EMBEDDING", "1")
+        .args(["add", "sample.bin"])
+        .assert()
+        .success();
+
+    let output = base_command(&temp)
+        .env("MEMENTO_TEST_EMBEDDING", "1")
+        .args(["reindex", "sample.bin"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let stdout = strip_ansi(&String::from_utf8(output).expect("stdout is utf-8"));
+    assert!(stdout.contains("refreshed 1 resource(s)"));
+    assert!(stdout.contains("reindexed sample.bin metadata only"));
+
+    stop_server(&mut server);
+}
+
+#[test]
+fn reindex_promotes_binary_resource_when_file_becomes_text() {
+    let temp = tempdir().expect("create temp dir");
+    let source = fixture_path("binary/sample.bin");
+    let copied = temp.path().join("sample.bin");
+
+    fs::copy(&source, &copied).expect("copy fixture");
+
+    base_command(&temp)
+        .env("MEMENTO_TEST_EMBEDDING", "1")
+        .arg("init")
+        .assert()
+        .success();
+
+    let mut server = start_server(&temp, true);
+
+    base_command(&temp)
+        .env("MEMENTO_TEST_EMBEDDING", "1")
+        .args(["add", "sample.bin"])
+        .assert()
+        .success();
+
+    fs::write(&copied, "converted to text\nhello world").expect("rewrite file as text");
+
+    let reindex_output = base_command(&temp)
+        .env("MEMENTO_TEST_EMBEDDING", "1")
+        .args(["reindex", "sample.bin"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let reindex_stdout = strip_ansi(&String::from_utf8(reindex_output).expect("stdout is utf-8"));
+    assert!(reindex_stdout.contains("reindexed sample.bin"));
+    assert!(!reindex_stdout.contains("metadata only"));
+
+    let find_output = base_command(&temp)
+        .env("MEMENTO_TEST_EMBEDDING", "1")
+        .args(["find", "converted to text"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let find_stdout = strip_ansi(&String::from_utf8(find_output).expect("stdout is utf-8"));
+    assert!(find_stdout.contains("mem://resources/sample.bin"));
+    assert!(find_stdout.contains("preview converted to text | hello world"));
+
+    let show_output = base_command(&temp)
+        .args(["show", "mem://resources/sample.bin"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let show_stdout = strip_ansi(&String::from_utf8(show_output).expect("stdout is utf-8"));
+    assert!(show_stdout.contains("detail:disk"));
+    assert!(!show_stdout.contains("detail:metadata"));
 
     stop_server(&mut server);
 }

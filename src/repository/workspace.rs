@@ -105,6 +105,7 @@ pub struct NewContentLayer<'a> {
 
 #[derive(Debug, Clone)]
 pub struct ContentLayerRecord {
+    pub body: Option<String>,
     pub layer: String,
     pub storage_kind: String,
 }
@@ -274,7 +275,7 @@ impl WorkspaceRepository {
             .connection
             .prepare(
                 r#"
-                SELECT layer, storage_kind
+                SELECT body, layer, storage_kind
                 FROM content_layers
                 WHERE item_id = ?1
                 ORDER BY layer ASC
@@ -285,8 +286,9 @@ impl WorkspaceRepository {
         let rows = statement
             .query_map(params![item_id], |row| {
                 Ok(ContentLayerRecord {
-                    layer: row.get(0)?,
-                    storage_kind: row.get(1)?,
+                    body: row.get(0)?,
+                    layer: row.get(1)?,
+                    storage_kind: row.get(2)?,
                 })
             })
             .context("failed to query content layers")?;
@@ -480,6 +482,31 @@ impl WorkspaceRepository {
             )
             .optional()
             .context("failed to query item by URI")
+    }
+
+    pub fn get_content_layer(
+        &self,
+        item_id: i64,
+        layer: &str,
+    ) -> Result<Option<ContentLayerRecord>> {
+        self.connection
+            .query_row(
+                r#"
+                SELECT body, layer, storage_kind
+                FROM content_layers
+                WHERE item_id = ?1 AND layer = ?2
+                "#,
+                params![item_id, layer],
+                |row| {
+                    Ok(ContentLayerRecord {
+                        body: row.get(0)?,
+                        layer: row.get(1)?,
+                        storage_kind: row.get(2)?,
+                    })
+                },
+            )
+            .optional()
+            .context("failed to query content layer")
     }
 
     fn clear_item_vectors(&self, item_id: i64) -> Result<()> {

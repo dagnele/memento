@@ -9,6 +9,7 @@ use crate::service::shared::validate_workspace_embedding;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddResult {
     pub indexed_paths: Vec<String>,
+    pub metadata_only_paths: Vec<String>,
     pub skipped_paths: Vec<String>,
 }
 
@@ -31,6 +32,7 @@ pub fn execute(force: bool, paths: Vec<String>) -> Result<AddResult> {
 
     Ok(AddResult {
         indexed_paths: report.indexed_paths,
+        metadata_only_paths: report.metadata_only_paths,
         skipped_paths: report.skipped_paths,
     })
 }

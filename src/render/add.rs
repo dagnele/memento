@@ -7,11 +7,24 @@ pub fn render(result: &AddResult) -> String {
         "{} {} {}",
         "memento".bold(),
         "add".cyan().bold(),
-        format!("indexed {} resource(s)", result.indexed_paths.len()).green()
+        format!(
+            "indexed {} resource(s)",
+            result.indexed_paths.len() + result.metadata_only_paths.len()
+        )
+        .green()
     )];
 
     for path in &result.indexed_paths {
         lines.push(format!("{} {}", "added".dimmed(), path.cyan()));
+    }
+
+    for path in &result.metadata_only_paths {
+        lines.push(format!(
+            "{} {} {}",
+            "added".dimmed(),
+            path.cyan(),
+            "metadata only".dimmed()
+        ));
     }
 
     for path in &result.skipped_paths {
