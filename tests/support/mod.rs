@@ -3,8 +3,8 @@
 use std::fs;
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use assert_cmd::Command;

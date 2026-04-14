@@ -535,6 +535,121 @@ fn reindex_refreshes_modified_resource_via_server() {
 }
 
 #[test]
+fn reindex_directory_refreshes_all_files_inside_it() {
+    let temp = tempdir().expect("create temp dir");
+    let docs_dir = temp.path().join("docs");
+    let first = docs_dir.join("one.txt");
+    let second = docs_dir.join("two.txt");
+
+    fs::create_dir_all(&docs_dir).expect("create docs dir");
+    fs::write(&first, "first draft").expect("write first file");
+    fs::write(&second, "second draft").expect("write second file");
+
+    base_command(&temp)
+        .env("MEMENTO_TEST_EMBEDDING", "1")
+        .args(["init", "--model", "bge-small-en-v1.5"])
+        .assert()
+        .success();
+
+    let mut server = start_server(&temp, true);
+
+    base_command(&temp)
+        .env("MEMENTO_TEST_EMBEDDING", "1")
+        .args(["add", "docs"])
+        .assert()
+        .success();
+
+    fs::write(&first, "first final").expect("rewrite first file");
+    fs::write(&second, "second final").expect("rewrite second file");
+
+    let reindex_output = base_command(&temp)
+        .env("MEMENTO_TEST_EMBEDDING", "1")
+        .args(["reindex", "docs"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let reindex_stdout = strip_ansi(&String::from_utf8(reindex_output).expect("stdout is utf-8"));
+    assert!(reindex_stdout.contains("refreshed 2 resource(s)"));
+    assert!(reindex_stdout.contains("reindexed docs/one.txt"));
+    assert!(reindex_stdout.contains("reindexed docs/two.txt"));
+
+    let find_output = base_command(&temp)
+        .env("MEMENTO_TEST_EMBEDDING", "1")
+        .args(["find", "second final"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let find_stdout = strip_ansi(&String::from_utf8(find_output).expect("stdout is utf-8"));
+    assert!(find_stdout.contains("mem://resources/docs/two.txt"));
+    assert!(find_stdout.contains("preview second final"));
+
+    stop_server(&mut server);
+}
+
+#[test]
+fn reindex_without_args_handles_tracked_directory_inputs() {
+    let temp = tempdir().expect("create temp dir");
+    let docs_dir = temp.path().join("docs");
+    let first = docs_dir.join("one.txt");
+    let second = docs_dir.join("two.txt");
+
+    fs::create_dir_all(&docs_dir).expect("create docs dir");
+    fs::write(&first, "alpha one").expect("write first file");
+    fs::write(&second, "beta one").expect("write second file");
+
+    base_command(&temp)
+        .env("MEMENTO_TEST_EMBEDDING", "1")
+        .args(["init", "--model", "bge-small-en-v1.5"])
+        .assert()
+        .success();
+
+    let mut server = start_server(&temp, true);
+
+    base_command(&temp)
+        .env("MEMENTO_TEST_EMBEDDING", "1")
+        .args(["add", "docs"])
+        .assert()
+        .success();
+
+    fs::write(&first, "alpha two").expect("rewrite first file");
+    fs::write(&second, "beta two").expect("rewrite second file");
+
+    let reindex_output = base_command(&temp)
+        .env("MEMENTO_TEST_EMBEDDING", "1")
+        .arg("reindex")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let reindex_stdout = strip_ansi(&String::from_utf8(reindex_output).expect("stdout is utf-8"));
+    assert!(reindex_stdout.contains("reindexed docs/one.txt"));
+    assert!(reindex_stdout.contains("reindexed docs/two.txt"));
+
+    let find_output = base_command(&temp)
+        .env("MEMENTO_TEST_EMBEDDING", "1")
+        .args(["find", "alpha two"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let find_stdout = strip_ansi(&String::from_utf8(find_output).expect("stdout is utf-8"));
+    assert!(find_stdout.contains("mem://resources/docs/one.txt"));
+    assert!(find_stdout.contains("preview alpha two"));
+
+    stop_server(&mut server);
+}
+
+#[test]
 fn server_startup_reindexes_modified_agent_skill_file() {
     let temp = tempdir().expect("create temp dir");
 

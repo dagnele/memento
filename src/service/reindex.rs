@@ -46,9 +46,11 @@ pub fn execute(paths: Vec<String>) -> Result<ReindexResult> {
 
     for path in resource_paths {
         match reindex_path(&repository, &config, &path)? {
-            ReindexPathOutcome::Indexed => indexed_paths.push(path),
-            ReindexPathOutcome::MetadataOnly => metadata_only_paths.push(path),
-            ReindexPathOutcome::Deleted => deleted_paths.push(path),
+            ReindexPathOutcome::Report(report) => {
+                indexed_paths.extend(report.indexed_paths);
+                metadata_only_paths.extend(report.metadata_only_paths);
+                deleted_paths.extend(report.deleted_paths);
+            }
             ReindexPathOutcome::Skipped => {}
         }
     }
@@ -61,9 +63,7 @@ pub fn execute(paths: Vec<String>) -> Result<ReindexResult> {
 }
 
 enum ReindexPathOutcome {
-    Indexed,
-    MetadataOnly,
-    Deleted,
+    Report(ReindexResult),
     Skipped,
 }
 
@@ -75,7 +75,11 @@ fn reindex_path(
     if let Some(item) = repository.get_item_by_source_path(source_path)? {
         if !Path::new(source_path).exists() {
             repository.delete_item(item.id)?;
-            return Ok(ReindexPathOutcome::Deleted);
+            return Ok(ReindexPathOutcome::Report(ReindexResult {
+                indexed_paths: Vec::new(),
+                metadata_only_paths: Vec::new(),
+                deleted_paths: vec![source_path.to_string()],
+            }));
         }
 
         return match item.namespace.as_str() {
@@ -104,12 +108,15 @@ fn reindex_resource_file(
 ) -> Result<ReindexPathOutcome> {
     let report = reindex_resource_paths(repository, config, &[source_path.to_string()])?;
 
-    if !report.indexed_paths.is_empty() {
-        Ok(ReindexPathOutcome::Indexed)
-    } else if !report.metadata_only_paths.is_empty() {
-        Ok(ReindexPathOutcome::MetadataOnly)
-    } else if !report.deleted_paths.is_empty() {
-        Ok(ReindexPathOutcome::Deleted)
+    if !report.indexed_paths.is_empty()
+        || !report.metadata_only_paths.is_empty()
+        || !report.deleted_paths.is_empty()
+    {
+        Ok(ReindexPathOutcome::Report(ReindexResult {
+            indexed_paths: report.indexed_paths,
+            metadata_only_paths: report.metadata_only_paths,
+            deleted_paths: report.deleted_paths,
+        }))
     } else {
         Ok(ReindexPathOutcome::Skipped)
     }
@@ -123,7 +130,11 @@ fn reindex_namespace_file(
 ) -> Result<ReindexPathOutcome> {
     let uri_path = namespace_uri_path(namespace, source_path)?;
     index_namespace_item(repository, config, namespace, &uri_path, source_path)?;
-    Ok(ReindexPathOutcome::Indexed)
+    Ok(ReindexPathOutcome::Report(ReindexResult {
+        indexed_paths: vec![source_path.to_string()],
+        metadata_only_paths: Vec::new(),
+        deleted_paths: Vec::new(),
+    }))
 }
 
 fn normalize_input_path(path: &str) -> Result<String> {

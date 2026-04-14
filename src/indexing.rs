@@ -167,10 +167,19 @@ pub fn reindex_resource_paths(
         let resolved_path = absolute_path
             .canonicalize()
             .with_context(|| format!("failed to resolve path `{}`", absolute_path.display()))?;
-        match index_file(repository, config, &resolved_path, resource_path)? {
-            IndexFileOutcome::Indexed => report.indexed_paths.push(resource_path.clone()),
-            IndexFileOutcome::MetadataOnly => {
-                report.metadata_only_paths.push(resource_path.clone())
+
+        if resolved_path.is_dir()
+            && let Some(item) = repository.get_item_by_source_path(resource_path)?
+        {
+            repository.delete_item(item.id)?;
+            report.deleted_paths.push(resource_path.clone());
+        }
+
+        for file_path in discover_files(&resolved_path)? {
+            let normalized_path = normalized_workspace_path(&file_path)?;
+            match index_file(repository, config, &file_path, &normalized_path)? {
+                IndexFileOutcome::Indexed => report.indexed_paths.push(normalized_path),
+                IndexFileOutcome::MetadataOnly => report.metadata_only_paths.push(normalized_path),
             }
         }
     }
