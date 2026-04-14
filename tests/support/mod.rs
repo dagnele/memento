@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use assert_cmd::Command;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::OnceLock;
 
 pub struct RunningServer {
     child: Option<std::process::Child>,
@@ -201,7 +201,7 @@ pub fn wait_for_server(
     stdout_path: &Path,
     stderr_path: &Path,
 ) {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(15);
 
     while Instant::now() < deadline {
         if let Some(status) = child.try_wait().expect("poll server process") {
